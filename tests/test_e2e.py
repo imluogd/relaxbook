@@ -10,7 +10,8 @@ FFmpeg 外唯一的真实外部依赖是 Edge 在线语音服务。
 * 若任务第一轮以网络类错误结束，按 A5 的恢复流程最多续跑 2 轮：
   ``db.reset_segment_failures`` + ``db.set_job_state(job_id, "queued")`` 后再次
   ``run_job(job_id)``。这本身就在验证 A5 的断点续跑：断言后续轮次只补失败
-  片段（缓存命中数 > 0，未命中数 == 上一轮失败片段数）。
+  片段（本轮未命中数 == 上一轮失败片段数，其余已完成片段直接复用既有缓存，
+  不会重新合成）。
 * 两轮恢复后仍未完成：再探测 3 次；仍全部是连接类错误才 skip，否则 fail，
   并打印逐轮进度、最后 3 条错误与网络诊断。
 * 任务完成之后的所有 A2/A3 断言（文件名、章节、时长、解码、缓存复用）都是
@@ -90,7 +91,16 @@ def _private_settings(settings: Settings) -> Settings:
     No such file or directory）。因此在 conftest 保证「不在仓库内」的临时根目录
     下再建一个本次进程独有的目录；工具路径/音色等仍来自 ``settings`` fixture。
     """
-    private_dir = Path(tempfile.mkdtemp(prefix="relaxbook-e2e-"))
+    repo = Path(__file__).resolve().parents[1]
+    temp_root = Path(tempfile.gettempdir())
+    try:
+        unsafe = temp_root.resolve() == repo or repo in temp_root.resolve().parents
+    except OSError:  # pragma: no cover - 防御性
+        unsafe = True
+    if unsafe:  # TMP 指向仓库（旧教训）：退到仓库外的安全位置
+        temp_root = repo.parent / "relaxbook-test-tmp"
+        temp_root.mkdir(parents=True, exist_ok=True)
+    private_dir = Path(tempfile.mkdtemp(prefix="relaxbook-e2e-", dir=str(temp_root)))
     private = dataclasses.replace(settings, data_dir=str(private_dir))
     private.ensure_dirs()
     db.init_db(private.db_path)
@@ -306,6 +316,7 @@ def _run_one_round(
         f"片段 {result['done_segments']}/{result['total_segments']} "
         f"失败={result['failed_segments']} 章={result['done_chapters']} "
         f"缓存命中={result['cache_hit']} 未命中={result['cache_miss']} "
+        f"复用已有缓存={result['total_segments'] - result['cache_miss']} "
         f"耗时={elapsed:.2f}s",
         flush=True,
     )
@@ -726,15 +737,18 @@ def test_three_chapter_end_to_end_real_edge(
         )
 
     # 恢复轮次必须只补缺失片段（A5：已完成的片段不重新合成）。
+    # 注意：worker 只对「待合成」片段查缓存，已 done 的片段本轮根本不会进入队列，
+    # 因此本轮 cache=hit 日志可能为 0；真正的证据是「本轮合成调用数（cache=miss）
+    # == 上一轮失败片段数」，其余片段全部直接复用既有缓存。
     if len(rounds) > 1:
         recovery_round = rounds[-1]
-        assert recovery_round["cache_hit"] > 0, (
-            "恢复轮次没有任何缓存命中：说明已成功的片段被重新合成了"
-        )
+        reused_cached = recovery_round["total_segments"] - recovery_round["cache_miss"]
         assert recovery_round["cache_miss"] == recovery_round["previous_failed"], (
             f"恢复轮次未命中 {recovery_round['cache_miss']} 个片段，"
             f"上一轮失败 {recovery_round['previous_failed']} 个，应只补失败片段"
         )
+        assert reused_cached == recovery_round["total_segments"] - recovery_round["previous_failed"]
+        assert reused_cached > 0, "恢复轮次没有复用任何已完成的片段缓存"
 
     # -- A2/A3 硬断言 --------------------------------------------------------
     snapshot = _snapshot(settings, job_id)

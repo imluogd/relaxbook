@@ -112,3 +112,20 @@ ffprobe -v error -show_format -show_chapters -of json "示例书 - 晓晓（女�
 | 语速 | 该模型暂无 `rate` 参数；传入非 `+0%` 会明确报错，不静默忽略 |
 
 注意：`qwen3-tts-flash` 的响应返回的是 **24 kHz 单声道 WAV 下载地址**（OSS 短链），worker 会解码统一成 24 kHz WAV 片段缓存，再封装 MP3/M4B；这条链路已由上述整书实测覆盖。
+
+## 六、Qwen-Audio-TTS（qwen-audio-3.1-tts-plus）实测
+
+上面第五节是更便宜的 `qwen3-tts-flash`；当前默认已切到 `qwen-audio-3.1-tts-plus`（旗舰音色，音质更高）。
+
+| 项目 | 实测值 |
+| --- | --- |
+| 端点 | `POST /api/v1/services/audio/tts/SpeechSynthesizer`（与 qwen3-tts-flash 的 multimodal 端点不同） |
+| 音色 | 4 个旗舰音色：longanlingxin_v3.1（龙安灵心·女·知心温暖）、longanhuan_v3.1（龙安欢·女·热情）、longanfengyue_v3.1（龙安风悦·女·自然）、xunanchuan_v3.1（许南川·男·磁性） |
+| 单请求 | 82 字 → 18.0 秒音频，墙钟 4.3–6.9 秒 |
+| 并发 | 2 → x4.6；**4 → x9.3**；6 → x8.9；8 → x7.1（每 1 小时成品约 6.5 分钟，并发保持 4） |
+| 整书（示例书，龙安灵心） | 17 段 / 19 秒完成；M4B `示例书 - 龙安灵心（女·知心温暖，有声书） - v01.m4b` 962,909 B / **113.120 秒**；内嵌章节 0–26.640 / 26.640–60.240 / 60.240–113.120（首尾相接）；`ffmpeg -f null` 解码通过 |
+| 分章 MP3 | `001 - 序言.mp3` 26.688 s / 213,740 B；`002 - 出发.mp3` 33.648 s / 269,420 B；`003 - 出发.mp3` 52.944 s / 423,788 B |
+| 语速（指令控制） | 同一段文字：`+0%` 12.64 s → `+20%` 10.32 s（缩短 18%）；`-15%` 12.80 s（放慢效果温和）。语速以自然语言指令实现，属近似控制 |
+| 其它能力 | 指令控制（语气/方言）、SSML、时间戳（本版未用到 SSML/时间戳） |
+
+不同模型端点与音色表见 `relaxbook/tts/qwen.py` 的 `MODEL_SPECS`；切换模型只需改 `config.json` 的 `qwen_model`。

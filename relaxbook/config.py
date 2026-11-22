@@ -138,10 +138,10 @@ class Settings:
     # Qwen-TTS (Alibaba Cloud DashScope / 百炼).  Prefer the environment
     # variable DASHSCOPE_API_KEY; a value here wins over the environment.
     qwen_api_key: str = ""
-    qwen_model: str = "qwen3-tts-flash"
+    qwen_model: str = "qwen-audio-3.1-tts-plus"
     qwen_base_url: str = "https://dashscope.aliyuncs.com"
     qwen_timeout: float = 60.0
-    qwen_voice: str = "Cherry"
+    qwen_voice: str = "longanlingxin_v3.1"
 
     # External tools (absolute paths; auto-detected when empty)
     ffmpeg: str = ""

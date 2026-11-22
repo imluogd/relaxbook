@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -61,7 +62,9 @@ def pytest_configure(config: pytest.Config) -> None:
     tempfile.tempdir = str(SAFE_TEMP)
     basetemp = config.option.basetemp
     if not basetemp:
-        config.option.basetemp = str(SAFE_TEMP / "pytest-tmp")
+        # One base directory per pytest process: a shared one would be wiped by
+        # every new session (and by a parallel run using the same checkout).
+        config.option.basetemp = str(SAFE_TEMP / f"pytest-tmp-{os.getpid()}")
 
 
 @pytest.fixture(scope="session", autouse=True)

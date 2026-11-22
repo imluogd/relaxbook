@@ -78,7 +78,7 @@ Qwen3-TTS 1.7B CustomVoice 是离线方案，提供 Vivian 和 Serena，共用�
 
 仓库保存应用代码、网页模板、数据库迁移、锁定的依赖、第三方版本和模型校验清单、示例配置、启动脚本以及可再分发的小型测试书。远程仓库为 `git@git.ustc.edu.cn:luogd/relaxbook.git`。换电脑时，由接手者自行检查并配置该机的 SSH 连接，用 git ls-remote 验证仓库访问后检出代码。个人电子书、模型权重、音频和本机配置置于 Git 工作区之外的数据目录。
 
-README 给出 Windows PowerShell 与 macOS/Linux 终端示例。start 启动工作进程和本机网页。使用 `start --with-local-qwen` 时，可在 Windows WSL 或 x86-64 Linux 上下载并校验固定版本的离线模型和运行器，再一并启动离线服务。已有兼容服务时直接复用。doctor 检查 Qwen 音色配置、本地模型服务、calibre、FFmpeg/ffprobe 和数据目录。
+[部署指南](setup.md)给出 Windows PowerShell 与 macOS/Linux 终端示例。start 启动工作进程和本机网页。使用 `start --with-local-qwen` 时，可在 Windows WSL 或 x86-64 Linux 上下载并校验固定版本的离线模型和运行器，再一并启动离线服务。已有兼容服务时直接复用。doctor 检查 Qwen 音色配置、本地模型服务、calibre、FFmpeg/ffprobe 和数据目录。
 
 第一台候选机器实际为 Windows、Intel i5-1240P、约 16 GB 内存、Iris Xe，已找到 calibre 8.0.1，当前 PATH 未找到 ffmpeg 和 ffprobe。先走 CPU 路径并记录真实速度。第二台电脑从干净检出起步验证同一个版本和样书；各操作系统的支持状态以实际安装和转换记录标注。未来迁移到服务器可沿用网页与任务接口，通过配置迁移数据目录与模型位置，届时再设计认证、HTTPS 和多用户隔离。
 

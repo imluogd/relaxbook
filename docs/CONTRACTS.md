@@ -163,26 +163,36 @@ def verify_m4b(path: Path, *, ffmpeg: str, ffprobe: str, expected_chapters: int 
     # {"ok": bool, "duration_ms": int, "chapters": [...]}；不 ok 时 "error": str
 ```
 
-## 10. `relaxbook/tts/base.py`、`edge.py`、`kokoro.py`、`__init__.py`（A3：worker-tts）
+## 10. `relaxbook/tts/` 引擎（A3：worker-tts）
 
 ```python
 @dataclass
 class Voice:
     id: str; name: str; language: str    # "zh-CN" / "en-US"
     gender: str                          # "Female"/"Male"
-    engine: str                          # "edge"
+    engine: str                          # "edge" / "qwen"
 
 class TTSError(Exception): ...
 
 class Engine(Protocol):
     name: str
     model: str
+    audio_format: str                    # "mp3"（Edge）/ "wav"（Qwen），worker 据此命名临时文件
+    rate_supported: bool                 # Qwen 为 False（不支持语速参数）
     def voices(self) -> list[Voice]: ...
-    def synthesize(self, text: str, voice: str, rate: str) -> bytes: ...   # 返回 MP3 字节，24kHz mono 48kbps
+    def synthesize(self, text: str, voice: str, rate: str) -> bytes: ...
 
-def get_engine(name: str, settings) -> Engine
-def list_voices(settings) -> list[Voice]
+def get_engine(name: str | None, settings) -> Engine          # 支持 "auto"
+def resolve_engine_name(name: str | None, settings) -> str    # auto -> qwen(有 Key) / edge
+def list_voices(settings) -> list[Voice]                      # Edge 常驻 + 有 Key 时附 Qwen
+def engine_status(settings) -> list[dict]                     # [{name,model,available,reason,selected}]
 ```
+
+引擎清单与选择：
+- `edge`：微软 Edge 在线语音，免费；`curl_cffi` + `impersonate="chrome"` 的 WebSocket；单次 `ws.recv` 超时 25s、最多 5 次退避重试（1/2/3/5/8s + 0–1s 抖动），每次 attempt 新建连接。
+- `qwen`：阿里云百炼 DashScope Qwen-TTS，需 `DASHSCOPE_API_KEY` 或 `config.json` 的 `qwen_api_key`；`qwen-tts` 音色 Cherry/Serena/Ethan/Chelsie，`qwen3-tts-flash` 另有方言音色；返回 WAV 字节；不支持 `rate`（传非 `+0%` 抛中文 `TTSError`）。
+- `kokoro`：占位（本地离线，未安装）。
+- `auto`（默认）：有 Qwen Key 用 `qwen`，否则 `edge`。任务创建时解析成具体引擎名写入 `job.engine`，保证可复现。
 
 `edge.py` 必须使用 **curl_cffi + impersonate="chrome" 的 WebSocket**（直接 OpenSSL/aiohttp 到
 `speech.platform.bing.com` 会被重置；`edge_tts` 包的 helper 可复用）。已在本机验证通过的最小实现：
@@ -262,6 +272,7 @@ def main(argv=None) -> int   # 解析 --data-dir/--host/--port，起 uvicorn
 | GET | `/api/books/{id}` | `{"book":{…},"revision":{id,chapter_count},"chapters":[{"id","idx","title","read","warnings","locator"}],"warnings":[]}` |
 | GET | `/api/books/{id}/chapters/{cid}` | `{"chapter":{id,idx,title,text,read,source_locator,warnings}}` |
 | PUT | `/api/books/{id}/revision` | body `{"base_revision_id":int,"note":str,"chapters":[{"title","text","read","source_locator"}]}`；返回 `{"revision_id"}`；`base_revision_id != 当前最新` → 409 `{"detail":"版本已过期，请刷新后重试"}` |
+| GET | `/api/books/{id}/estimate` | 不合成、仅按文本统计预测：`{"estimate":{engine,voice,rate,chars,segments,audio_ms,wall_seconds,m4b_bytes,mp3_bytes,concurrency,chapters:[…],notes:[…]},"summary":"中文多行摘要","note":"本估算仅按文本统计，未实测。"}` |
 | GET | `/api/books/{id}/cover` | 图片或 404 |
 | GET | `/api/voices` | `{"engines":[{"name","model","available":bool}],"voices":[{id,name,language,gender,engine}]}`，至少 3 中文 + 1 英文才会 available |
 | POST | `/api/previews` | body `{"text":str,"voice":str,"rate":str}`；202 `{"preview_id"}`；后台线程合成到 `previews_dir/{id}.mp3` |
@@ -319,3 +330,34 @@ def main(argv=None) -> int   # 解析 --data-dir/--host/--port，起 uvicorn
 - `setup`：创建/复用 venv，`pip install -r requirements.txt`（用本机镜像参数），写默认 config，检查工具。
 - `doctor`：逐项报告 Python 版本、ffmpeg/ffprobe、calibre、数据目录写权限与剩余空间、TTS 引擎可用性（edge 需要联网，可用 1 句试合成探测），中文音色数量；缺失项给出修复命令；有阻塞项时退出码 1。
 - `start`：启动 worker 子进程 + uvicorn，端口占用时尝试后续端口并打印实际地址；`Ctrl+C` 一起退出。
+
+## 15. `relaxbook/estimate.py`（A7：按文本预测，不实测）
+
+```python
+@dataclass
+class ChapterEstimate:
+    index: int; title: str; chars: int; segments: int; audio_ms: int; mp3_bytes: int
+
+@dataclass
+class BookEstimate:
+    engine: str; voice: str; rate: str
+    chapters: list[ChapterEstimate]; chars: int; segments: int
+    audio_ms: int; wall_seconds: float; m4b_bytes: int; mp3_bytes: int
+    concurrency: int; notes: list[str]
+
+def chars_per_second(engine: str, *, language: str = "zh") -> float
+def realtime_factor(engine: str) -> float
+def estimate_chapter(text, *, index, title, engine, voice, rate="+0%", mp3_bitrate="64k") -> ChapterEstimate
+def estimate_book(chapters, *, engine, voice, rate="+0%", concurrency=3,
+                  mp3_bitrate="64k", m4b_bitrate="64k") -> BookEstimate
+def estimate_book_from_text(total_chars: int, *, engine, voice, ...) -> BookEstimate
+def format_estimate(est: BookEstimate) -> str        # 中文摘要，含「成品时长 / 预计生成 / 成品大小」
+```
+
+估算常量（校准值，非实测，写进模块 docstring）：
+- 中文朗读速度：edge 4.6 字/秒（依据已产出的《示例书》559 字 → 122.232 秒，即 4.57）、qwen 5.0、indextts 4.8、kokoro 4.5；英文 15.7 字符/秒（≈156 词/分 × 5.5）。
+- 语速参数：`+20%` → 时长 ÷1.2；`-20%` → ÷0.8。
+- 片段数：按 `textnorm.segment_text` 真实切片计数（与 worker 同口径，不另写近似规则）。
+- 生成耗时：`wall_seconds = audio_seconds / realtime_factor`，`realtime_factor` 估算 edge 6.0 / qwen 5.0 / indextts 1.0 / kokoro 0.5，并按 `max(1, 3/concurrency)` 修正。
+- 文件大小：`audio_seconds × bitrate/8`；M4B 另计 2% 容器开销。
+- 该模块**不得**导入网络/子进程库，也不得触发合成或 ffmpeg；纯文本统计。

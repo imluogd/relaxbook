@@ -12,6 +12,7 @@ background worker does for full-book jobs.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import logging
@@ -192,6 +193,13 @@ def _engine_rows(settings: Settings, voices: Sequence[dict[str, Any]]) -> list[d
             row["model"] = model or row.get("model", "")
             row["available"] = bool(row.get("available")) and available
     return rows
+
+
+def _default_voice_for(engine_name: str, settings: Settings) -> str:
+    """Default voice id for an engine (Qwen and Edge use different catalogues)."""
+    if (engine_name or "").strip().lower() == "qwen":
+        return (getattr(settings, "qwen_voice", "") or "Cherry").strip()
+    return (settings.voice or "zh-CN-XiaoxiaoNeural").strip()
 
 
 def _book_row_payload(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
@@ -668,6 +676,45 @@ def build_router(settings: Settings) -> APIRouter:
             "revision": revision_payload,
             "chapters": chapters,
             "warnings": book["warnings"],
+        }
+
+    @api.get("/books/{book_id}/estimate")
+    def get_estimate(
+        book_id: int,
+        voice: str | None = None,
+        engine: str | None = None,
+        rate: str | None = None,
+        concurrency: int | None = None,
+    ) -> dict[str, Any]:
+        """Predict duration / generation time from the text alone (no synthesis)."""
+        from . import estimate as estimate_mod
+
+        conn = _connect(settings)
+        try:
+            row = db.get_book(conn, book_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="书籍不存在")
+            revision = db.current_revision(conn, book_id)
+            if revision is None:
+                raise HTTPException(status_code=409, detail="书籍尚未解析完成")
+            chapters = db.list_chapters(conn, int(revision["id"]))
+        finally:
+            conn.close()
+        engine_name = tts.resolve_engine_name((engine or "").strip() or settings.engine, settings)
+        chosen_voice = (voice or "").strip() or _default_voice_for(engine_name, settings)
+        result = estimate_mod.estimate_book(
+            [{"index": ch["idx"], "title": ch["title"], "text": ch["text"], "read": ch["read"]} for ch in chapters],
+            engine=engine_name,
+            voice=chosen_voice,
+            rate=(rate or settings.rate or "+0%"),
+            concurrency=max(1, int(concurrency or settings.concurrency)),
+            mp3_bitrate=settings.mp3_bitrate,
+            m4b_bitrate=settings.m4b_bitrate,
+        )
+        return {
+            "estimate": dataclasses.asdict(result),
+            "summary": estimate_mod.format_estimate(result),
+            "note": "本估算仅按文本统计，未实测。",
         }
 
     @api.get("/books/{book_id}/chapters/{chapter_id}")

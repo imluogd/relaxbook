@@ -317,6 +317,28 @@
     ).map(function (checkbox) { return checkbox.dataset.voice; });
   }
 
+  // 仅按文本统计预测成品时长与生成耗时，不触发任何合成。
+  async function loadEstimate() {
+    const box = $("estimate-box");
+    if (!box) return;
+    const voice = ($("job-voice") && $("job-voice").value) || "";
+    const rate = ($("rate") && $("rate").value) || "+0%";
+    box.textContent = "正在按文本估算…";
+    try {
+      const data = await apiFetch(
+        "/api/books/" + BOOK_ID + "/estimate?voice=" + encodeURIComponent(voice) +
+        "&rate=" + encodeURIComponent(rate)
+      );
+      const lines = String(data.summary || "").split("\n").filter(function (line) {
+        return line.indexOf("成品时长") === 0 || line.indexOf("预计生成") === 0 ||
+               line.indexOf("成品大小") === 0;
+      });
+      box.textContent = lines.length ? lines.join("；") + "（按文本估算，未实测）" : "无法估算";
+    } catch (err) {
+      box.textContent = "无法估算时长：" + (err && err.message ? err.message : err);
+    }
+  }
+
   function voiceName(voiceId) {
     const found = voices.filter(function (voice) { return voice.id === voiceId; })[0];
     return found ? (found.name || found.id) : voiceId;
@@ -421,7 +443,9 @@
     }
   );
 
-  loadVoices();
+  loadVoices().then(loadEstimate);
   loadBook();
+  if ($("job-voice")) $("job-voice").addEventListener("change", loadEstimate);
+  if ($("rate")) $("rate").addEventListener("change", loadEstimate);
   window.setInterval(pollBook, 2000);
 })();

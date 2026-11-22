@@ -71,8 +71,8 @@ Windows 首轮实测覆盖四种可读格式、扫描 PDF 提示、三种普通�
 接手开发的模型或开发者须自行检查新电脑的 SSH 环境和 USTC 仓库访问权限，选择该机已配置的 SSH 客户端、密钥或主机别名。本项目在当前 Windows 电脑上使用 WSL Git 和 WSL 内的 SSH 密钥。新电脑可使用本机已授权的身份，或生成专用密钥，将公钥添加到有仓库权限的 USTC 账号。私钥留在生成它的电脑上。
 
 ```sh
-git ls-remote git@git.ustc.edu.cn:luogd/relaxbook.git refs/heads/codex/relaxbook-v1
-git clone --branch codex/relaxbook-v1 git@git.ustc.edu.cn:luogd/relaxbook.git
+git ls-remote git@git.ustc.edu.cn:luogd/relaxbook.git refs/heads/main
+git clone --branch main git@git.ustc.edu.cn:luogd/relaxbook.git
 cd relaxbook
 ```
 

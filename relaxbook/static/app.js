@@ -326,6 +326,7 @@ async function poll() {
 async function init() {
   try {
     state.voices = await api("voices");
+    $("online-voice-notice").hidden = !state.voices.some((voice) => voice.engine === "edge");
     for (const [index, voice] of state.voices.entries()) {
       const option = element("option", voice.label, $("voice"));
       option.value = voice.id;

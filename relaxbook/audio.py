@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import logging
@@ -6,6 +7,7 @@ import subprocess
 import wave
 from functools import cached_property
 from importlib.metadata import version
+from importlib.util import find_spec
 from pathlib import Path
 
 import sherpa_onnx
@@ -17,6 +19,16 @@ VOICES = [
     {"id": 54, "label": "普通话 54", "language": "zh"},
     {"id": 58, "label": "普通话 58", "language": "zh"},
     {"id": 0, "label": "English 0", "language": "en"},
+]
+
+EDGE_VOICES = [
+    {"id": key, "label": f"微软 · {label}（联网）", "language": language,
+     "engine": "edge", "speaker": speaker}
+    for key, label, language, speaker in [
+        (200, "晓晓", "zh", "zh-CN-XiaoxiaoNeural"),
+        (201, "云扬", "zh", "zh-CN-YunyangNeural"),
+        (203, "Jenny", "en", "en-US-JennyNeural"),
+    ]
 ]
 
 VOICE_PACKS = {
@@ -38,7 +50,7 @@ def pack_directory(config, pack):
 
 
 def voice_options(config):
-    options = []
+    options = EDGE_VOICES.copy() if config.get("microsoft_online") and find_spec("edge_tts") else []
     for engine, pack in VOICE_PACKS.items():
         directory = pack_directory(config, pack)
         if all((directory / name).is_file() for name in ("model.onnx", "lexicon.txt", "tokens.txt")):
@@ -57,6 +69,26 @@ def chunks(text, limit=160):
             remaining = remaining[end:].lstrip()
         if remaining:
             yield remaining
+
+
+def speech_chunks(text, voice):
+    if voice.get("engine") != "edge":
+        yield from chunks(text)
+        return
+    # Keep paragraph breaks and punctuation in the same request where possible.
+    remaining = text.strip()
+    limit = 650
+    while len(remaining) > limit:
+        window = remaining[limit // 2:limit]
+        for stops in (r"[。！？.!?\n]", r"[；;]", r"[，、,\s]"):
+            boundaries = list(re.finditer(stops, window))
+            if boundaries:
+                break
+        end = limit // 2 + boundaries[-1].end() if boundaries else limit
+        yield remaining[:end].strip()
+        remaining = remaining[end:].lstrip()
+    if remaining:
+        yield remaining
 
 
 def safe_name(text, fallback):
@@ -141,15 +173,18 @@ class Narrator:
         except (OSError, EOFError, wave.Error):
             pass
         tmp = path.with_suffix(".partial.wav")
-        audio = self.engine.generate(text, sid=voice.get("speaker", voice["id"]), speed=speed)
-        if not sherpa_onnx.write_wave(str(tmp), self.prepare_samples(audio.samples), audio.sample_rate):
-            raise RuntimeError("无法写入语音片段。")
+        self.synthesize(text, voice, speed, tmp)
         info = wave_info(tmp)
         if info.nframes <= 0 or (info.nchannels, info.sampwidth) != (1, 2):
             raise RuntimeError("语音引擎返回空片段或不支持的采样格式。")
         tmp.replace(path)
         LOG.info("Synthesized segment %s", key)
         return path
+
+    def synthesize(self, text, voice, speed, output):
+        audio = self.engine.generate(text, sid=voice.get("speaker", voice["id"]), speed=speed)
+        if not sherpa_onnx.write_wave(str(output), self.prepare_samples(audio.samples), audio.sample_rate):
+            raise RuntimeError("无法写入语音片段。")
 
     def prepare_samples(self, samples):
         return samples
@@ -188,6 +223,45 @@ class VitsNarrator(Narrator):
         # Use one gain per segment, without a compressor or a change in timing.
         gain = min(10 ** (8 / 20), 10 ** (-2 / 20) / peak, 10 ** (-20 / 20) / rms)
         return [sample * gain for sample in samples]
+
+
+class EdgeNarrator(Narrator):
+    def __init__(self, config):
+        self.enabled = config.get("microsoft_online", False)
+        self.ffmpeg = config["ffmpeg"]
+
+    @cached_property
+    def fingerprint(self):
+        if not self.enabled:
+            raise ValueError("微软在线语音已禁用，请在本机配置中启用后继续。")
+        if not find_spec("edge_tts"):
+            raise ValueError("请先安装 requirements-edge.txt 中的微软在线语音依赖。")
+        return f"edge-read-aloud-v1:{version('edge-tts')}"
+
+    def synthesize(self, text, voice, speed, output):
+        import edge_tts
+
+        rate = f"{round((speed - 1) * 100):+d}%"
+        source = output.with_suffix(".mp3")
+
+        async def save():
+            stream = edge_tts.Communicate(text, voice["speaker"], rate=rate,
+                                          connect_timeout=10, receive_timeout=30)
+            await asyncio.wait_for(stream.save(str(source)), timeout=65)
+
+        try:
+            try:
+                asyncio.run(save())
+            except Exception as error:
+                raise RuntimeError(
+                    "微软在线语音暂时无法生成音频。请检查网络后重试，或另选本地音色。"
+                    f"（{type(error).__name__}）"
+                ) from error
+            run([self.ffmpeg, "-nostdin", "-v", "error", "-xerror", "-y", "-i", source,
+                 "-map", "0:a:0", "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", output],
+                timeout=30)
+        finally:
+            source.unlink(missing_ok=True)
 
 
 def combine(inputs, output):

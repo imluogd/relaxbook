@@ -5,7 +5,10 @@ from pathlib import Path
 
 from filelock import FileLock
 
-from .audio import VOICE_PACKS, Narrator, VitsNarrator, chunks, encode, pack_directory, probe, wave_info
+from .audio import (
+    VOICE_PACKS, EdgeNarrator, Narrator, VitsNarrator, encode, pack_directory,
+    probe, speech_chunks, wave_info,
+)
 from .books import parse
 from .store import Store, settings
 
@@ -46,7 +49,7 @@ def import_book(store, config, book):
 def render_preview(store, narrator, task):
     try:
         files = [narrator.render(store.root / "cache", text, task["voice"], task["speed"])
-                 for text in chunks(task["text"])]
+                 for text in speech_chunks(task["text"], task["voice"])]
         from .audio import combine
         output = store.root / "previews" / f"{task['id']}.wav"
         temp = output.with_suffix(".partial.wav")
@@ -99,7 +102,7 @@ def export_job(store, config, narrator, job):
                 return
             parts = []
             try:
-                for text in chunks(chapter["text"]):
+                for text in speech_chunks(chapter["text"], job["voice"]):
                     parts.append(narrator.render(store.root / "cache", text, job["voice"], job["speed"]))
                     done += 1
                     if checkpoint(store, job_id, done=done):
@@ -159,7 +162,10 @@ def archive_job(store, job):
 
 
 def work(store, config):
-    narrators = {"kokoro": Narrator(config["model_dir"], config["threads"])}
+    narrators = {
+        "kokoro": Narrator(config["model_dir"], config["threads"]),
+        "edge": EdgeNarrator(config),
+    }
     for name, pack in VOICE_PACKS.items():
         narrators[name] = VitsNarrator(pack_directory(config, pack), config["threads"])
     with FileLock(str(store.root / "worker.lock"), timeout=0):

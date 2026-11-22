@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .audio import chapter_name, chunks, safe_name, voice_options
+from .audio import chapter_name, safe_name, speech_chunks, voice_options
 from .store import Store, settings, uid
 
 config = settings()
@@ -204,7 +204,7 @@ def create_job(request: JobInput):
         active = [c for c in revision["chapters"] if not c["skip"]]
         if not active:
             raise HTTPException(422, "至少需要一个朗读章节。")
-        total = sum(len(list(chunks(c["text"]))) for c in active)
+        total = sum(len(list(speech_chunks(c["text"], voice))) for c in active)
         index = len(existing) + 1
         label = safe_name(voice["label"], "语音")
         filename = f"{safe_name(book['title'], '有声书')} - {label} - v{index:02}.m4b"

@@ -1,6 +1,7 @@
 {
   "port": 8765,
   "threads": 2,
+  "microsoft_online": false,
   "ffmpeg": "ffmpeg",
   "ffprobe": "ffprobe",
   "calibre": "ebook-convert"

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RelaxBook</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<header><span class="mark" aria-hidden="true">♪</span><strong>RelaxBook</strong><span class="local">本机书库</span></header>
+<div class="shell">
+  <aside aria-label="书库">
+    <h1>我的书库</h1>
+    <form id="upload">
+      <label class="upload-label" for="source">选择电子书</label>
+      <input id="source" type="file" accept=".epub,.pdf,.mobi,.azw3" required>
+      <p class="muted">EPUB · PDF · MOBI · AZW3</p>
+      <button class="primary">导入书籍</button>
+    </form>
+    <nav id="library" aria-label="已导入书籍"></nav>
+  </aside>
+  <main>
+    <p id="notice" role="status" aria-live="polite" hidden></p>
+    <section id="empty" class="card"><h2>把电子书变成有声书</h2><p>导入后核对章节，试听音色，再下载整书 M4B 和分章 MP3。</p></section>
+    <section id="book" hidden>
+      <h2 id="title"></h2>
+      <p id="author" class="muted"></p>
+      <p id="import-status" role="status"></p>
+      <div id="ready" hidden>
+        <details id="warnings" class="card" hidden><summary>导入时发现的问题</summary><ul id="warning-list"></ul></details>
+        <section class="card">
+          <div class="section-title"><h3>章节与正文</h3><button id="save" disabled>保存修改</button></div>
+          <div class="columns">
+            <div id="chapters" aria-label="章节"></div>
+            <div>
+              <label for="chapter-title">章名</label><input id="chapter-title" maxlength="1000">
+              <p id="chapter-source" class="muted"></p>
+              <label for="chapter-text">朗读正文</label><textarea id="chapter-text" rows="7"></textarea>
+              <div class="actions">
+                <label class="check"><input id="skip" type="checkbox">跳过此章</label>
+                <button id="up" title="上移章节">上移</button><button id="down" title="下移章节">下移</button>
+                <button id="split">按光标拆分</button><button id="merge">合并下一章</button>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section class="card">
+          <h3>音色试听</h3>
+          <label for="sample">试听文字（最多 400 字）</label><textarea id="sample" rows="3" maxlength="400"></textarea>
+          <div id="voice-options" class="actions"></div>
+          <button id="preview">生成所选样音</button><div id="samples" aria-live="polite"></div>
+          <div class="actions generation">
+            <label for="voice">整书音色</label><select id="voice"></select>
+            <label for="speed">语速</label><input id="speed" type="number" value="1" min="0.7" max="1.5" step="0.05">
+            <button id="generate" class="primary">生成有声书</button>
+          </div>
+        </section>
+        <section class="card">
+          <div class="section-title"><h3>转换结果</h3><select id="jobs" aria-label="转换版本"></select></div>
+          <p id="job-status" role="status">书籍转换后，结果会显示在这里。</p>
+          <div id="job-download" class="actions"></div>
+          <div id="job-table" class="table-wrap" hidden>
+            <table><thead><tr><th>章节</th><th>MP3 文件名</th><th>M4B 位置</th><th>时长</th><th>大小</th><th>状态</th></tr></thead><tbody id="result-rows"></tbody></table>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+</div>
+</body>
+</html>

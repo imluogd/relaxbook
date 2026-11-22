@@ -1,0 +1,7 @@
+{
+  "port": 8765,
+  "threads": 2,
+  "ffmpeg": "ffmpeg",
+  "ffprobe": "ffprobe",
+  "calibre": "ebook-convert"
+}

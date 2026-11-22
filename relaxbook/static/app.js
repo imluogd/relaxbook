@@ -1,5 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const state = { book: null, chapters: [], selected: 0, dirty: false, job: null, jobSnapshot: null, voices: [] };
+const generationChapters = new Set();
 const statuses = { queued: "排队中", parsing: "正在提取正文", ready: "已导入", running: "正在生成",
   pausing: "即将暂停", paused: "已暂停", packaging: "正在封装 M4B", complete: "已完成",
   failed: "失败", pending: "待生成" };
@@ -75,6 +76,29 @@ function chapterList() {
     button.setAttribute("aria-current", String(i === state.selected));
     action(button, async () => selectChapter(i));
   });
+  renderGenerationChapters();
+}
+
+function renderGenerationChapters() {
+  const visible = $("generation-scope").value === "selected";
+  $("generation-chapters").hidden = !visible;
+  if (!visible) return;
+  const options = $("generation-chapter-options");
+  options.replaceChildren();
+  state.chapters.forEach((chapter, index) => {
+    const label = element("label", "", options);
+    label.className = "check";
+    const input = element("input", "", label);
+    input.type = "checkbox";
+    input.disabled = chapter.skip;
+    input.checked = !chapter.skip && generationChapters.has(chapter);
+    input.addEventListener("change", () => {
+      if (input.checked) generationChapters.add(chapter);
+      else generationChapters.delete(chapter);
+    });
+    label.append((index + 1) + " · " + (chapter.title || "未命名章节") +
+      (chapter.skip ? "（跳过）" : ""));
+  });
 }
 
 async function chapterText(chapter) {
@@ -104,11 +128,12 @@ function dirty() { state.dirty = true; $("save").disabled = false; }
 
 async function save() {
   if (!state.dirty) return;
-  await Promise.all(state.chapters.map(chapterText));
-  const result = await api("books/" + state.book.id + "/revision", "PUT",
-    { revision: state.book.revision, chapters: state.chapters });
-  state.book.revision = result.revision;
-  state.chapters.forEach((c, i) => c.id = String(i + 1));
+  const { book, chapters } = state;
+  await Promise.all(chapters.map(chapterText));
+  const result = await api("books/" + book.id + "/revision", "PUT", { revision: book.revision, chapters });
+  if (state.book !== book || state.chapters !== chapters) return;
+  book.revision = result.revision;
+  chapters.forEach((c, i) => c.id = String(i + 1));
   state.dirty = false;
   $("save").disabled = true;
 }
@@ -131,6 +156,8 @@ async function openBook(id) {
     $("warning-list").replaceChildren();
     for (const warning of data.warnings) element("li", warning, $("warning-list"));
     state.chapters = data.chapters;
+    generationChapters.clear();
+    $("generation-scope").value = "all";
     $("samples").replaceChildren();
     await selectChapter(0);
     await listJobs();
@@ -266,6 +293,7 @@ action($("merge"), async () => {
   const current = state.chapters[state.selected];
   current.text += "\n\n" + await chapterText(next);
   current.source += " · " + next.source;
+  generationChapters.delete(next);
   state.chapters.splice(state.selected + 1, 1);
   dirty();
   await selectChapter(state.selected);
@@ -287,11 +315,26 @@ action($("preview"), async () => {
     } catch (error) { status.textContent = error.message; }
   }));
 });
+$("generation-scope").addEventListener("change", renderGenerationChapters);
 action($("generate"), async () => {
+  const { book, chapters } = state;
+  const scope = $("generation-scope").value;
+  const voice = Number($("voice").value);
+  const speed = Number($("speed").value);
+  let selected = null;
+  if (scope === "current") {
+    const chapter = chapters[state.selected];
+    if (!chapter || chapter.skip) throw Error("当前章已跳过，请选择要朗读的章节。");
+    selected = [chapter];
+  } else if (scope === "selected") {
+    selected = chapters.filter((chapter) => !chapter.skip && generationChapters.has(chapter));
+    if (!selected.length) throw Error("请至少勾选一个要生成的章节。");
+  }
   await save();
-  const result = await api("jobs", "POST", { book_id: state.book.id, revision: state.book.revision,
-    voice: Number($("voice").value), speed: Number($("speed").value), request_id: crypto.randomUUID() });
-  await listJobs(result.job_id);
+  if (state.book !== book) return;
+  const result = await api("jobs", "POST", { book_id: book.id, revision: book.revision,
+    chapter_ids: selected?.map((chapter) => chapter.id), voice, speed, request_id: crypto.randomUUID() });
+  if (state.book === book) await listJobs(result.job_id);
 });
 $("jobs").addEventListener("change", async () => {
   state.job = $("jobs").value;

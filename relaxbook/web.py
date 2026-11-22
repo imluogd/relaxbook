@@ -48,6 +48,7 @@ class PreviewInput(BaseModel):
 class JobInput(BaseModel):
     book_id: str
     revision: str
+    chapter_ids: list[str] | None = Field(default=None, min_length=1, max_length=5000)
     voice: int
     speed: float = Field(ge=0.7, le=1.5)
     request_id: str = Field(min_length=1, max_length=128)
@@ -201,19 +202,31 @@ def create_job(request: JobInput):
         if request.revision != book.get("revision"):
             raise HTTPException(409, "请打开并核对最新章节版本。")
         revision = find("revision", request.revision, db)
-        active = [c for c in revision["chapters"] if not c["skip"]]
+        chapters = revision["chapters"]
+        active = [(number, c) for number, c in enumerate(chapters, 1) if not c["skip"]]
         if not active:
             raise HTTPException(422, "至少需要一个朗读章节。")
-        total = sum(len(list(speech_chunks(c["text"], voice))) for c in active)
+        scope = ""
+        if request.chapter_ids is None:
+            planned = list(enumerate((c for _, c in active), 1))
+            filename_count = len(planned)
+        else:
+            selected = set(request.chapter_ids)
+            planned = [(number, c) for number, c in active if c["id"] in selected]
+            if len(planned) != len(request.chapter_ids):
+                raise HTTPException(422, "请选择不同且未跳过的章节。")
+            filename_count = len(chapters)
+            scope = f" - 第 {planned[0][0]} 章" if len(planned) == 1 else f" - 选定 {len(planned)} 章"
+        total = sum(len(list(speech_chunks(c["text"], voice))) for _, c in planned)
         index = len(existing) + 1
         label = safe_name(voice["label"], "语音")
-        filename = f"{safe_name(book['title'], '有声书')} - {label} - v{index:02}.m4b"
+        filename = f"{safe_name(book['title'], '有声书')}{scope} - {label} - v{index:02}.m4b"
         job = {
             **request.model_dump(), "id": uid(), "title": book["title"], "voice": voice,
             "filename": filename, "status": "queued", "total": total, "done": 0, "clean_text": True,
             "chapters": [{"id": c["id"], "index": i, "title": c["title"] or "未命名章节",
-                          "filename": chapter_name(i, len(active), c["title"]), "status": "pending"}
-                         for i, c in enumerate(active, 1)],
+                          "filename": chapter_name(i, filename_count, c["title"]), "status": "pending"}
+                         for i, c in planned],
         }
         store.put(db, "job", job)
     return {"job_id": job["id"]}

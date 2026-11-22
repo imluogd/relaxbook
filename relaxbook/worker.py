@@ -91,7 +91,7 @@ def export_job(store, config, narrator, job):
     cursor = done = 0
     # Older jobs keep their original chunk counts and cache keys.
     clean_text = job.get("clean_text", False)
-    active = [c for c in revision["chapters"] if not c["skip"]]
+    chapters = {c["id"]: c for c in revision["chapters"] if not c["skip"]}
     rows = job["chapters"]
     try:
         model = narrator.fingerprint
@@ -99,7 +99,8 @@ def export_job(store, config, narrator, job):
             raise ValueError("模型与原任务不同，请恢复原模型或创建新版本。")
         if checkpoint(store, job_id, model=model, done=0):
             return
-        for chapter, row in zip(active, rows):
+        for row in rows:
+            chapter = chapters[row["id"]]
             if checkpoint(store, job_id, current=row["title"]):
                 return
             parts = []

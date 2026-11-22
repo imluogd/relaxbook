@@ -5,6 +5,7 @@ import sys
 import time
 import zipfile
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from samples import CHAPTERS, sample_epub
@@ -106,8 +107,31 @@ def main():
         time.sleep(0.3)
     with zipfile.ZipFile(io.BytesIO(request(f"/api/artifacts/{job_id}/zip"))) as archive:
         assert archive.namelist() == names
+    for selected, expected in [(["3"], [3]), (["3", "1"], [1, 3])]:
+        partial_id = api("jobs", "POST", {
+            **config, "request_id": config["request_id"] + "-" + "-".join(selected),
+            "chapter_ids": selected,
+        })["job_id"]
+        partial = wait(f"jobs/{partial_id}", {"complete"})
+        assert partial["completed_chapters"] == partial["planned_chapters"] == len(expected)
+        assert [c["index"] for c in partial["chapters"]] == expected
+        assert [c["filename"] for c in partial["chapters"]] == [names[i - 1] for i in expected]
+        assert partial["chapters"][0]["start_ms"] == 0
+        partial_output = OUTPUT / partial["filename"]
+        partial_output.write_bytes(request(f"/api/artifacts/{partial_id}/m4b"))
+        _, partial_chapters = probe(CONFIG["ffprobe"], partial_output)
+        assert [c["tags"]["title"] for c in partial_chapters] == [CHAPTERS[i - 1][0] for i in expected]
+        for number in expected:
+            assert request(f"/api/artifacts/{partial_id}/{number}") == (OUTPUT / names[number - 1]).read_bytes()
+    for selected in ([], ["3", "3"], ["999"]):
+        try:
+            api("jobs", "POST", {**config, "request_id": "invalid-" + str(time.time_ns()), "chapter_ids": selected})
+        except HTTPError as error:
+            assert error.code == 422
+        else:
+            raise AssertionError(f"Invalid chapter selection accepted: {selected}")
     (OUTPUT / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"PASS: {len(voices)} offline samples, 3 tagged MP3s, chaptered M4B and ZIP ({duration} ms)")
+    print(f"PASS: {len(voices)} offline samples, whole book, single chapter, selected chapters and ZIP ({duration} ms)")
 
 
 if __name__ == "__main__":

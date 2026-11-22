@@ -176,16 +176,21 @@ def _voices_available(voices: Sequence[dict[str, Any]]) -> bool:
 
 def _engine_rows(settings: Settings, voices: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     available = _voices_available(voices)
-    primary = (settings.engine or "edge").strip() or "edge"
+    primary = tts.resolve_engine_name(None, settings)
     model = settings.model or ""
     try:
         engine = tts.get_engine(primary, settings)
         model = getattr(engine, "model", model) or model
     except Exception:
         pass
-    rows = [{"name": primary, "model": model, "available": available}]
-    if primary != "kokoro":
-        rows.append({"name": "kokoro", "model": "kokoro-multi-lang-v1_1", "available": False})
+    try:
+        rows = tts.engine_status(settings)
+    except Exception:  # pragma: no cover - defensive
+        rows = [{"name": primary, "model": model, "available": available}]
+    for row in rows:
+        if row.get("name") == primary:
+            row["model"] = model or row.get("model", "")
+            row["available"] = bool(row.get("available")) and available
     return rows
 
 
@@ -756,7 +761,7 @@ def build_router(settings: Settings) -> APIRouter:
             )
         voice = (body.voice or "").strip() or settings.voice
         rate = (body.rate or "").strip() or settings.rate or "+0%"
-        engine_name = (body.engine or "").strip() or settings.engine or "edge"
+        engine_name = tts.resolve_engine_name((body.engine or "").strip() or settings.engine, settings)
         model = settings.model or ""
         try:
             engine = tts.get_engine(engine_name, settings)
@@ -829,7 +834,7 @@ def build_router(settings: Settings) -> APIRouter:
             if revision is None or int(revision["book_id"]) != body.book_id:
                 raise HTTPException(status_code=404, detail="编辑版本不存在")
             voice = (body.voice or "").strip() or settings.voice
-            engine_name = (body.engine or "").strip() or settings.engine or "edge"
+            engine_name = tts.resolve_engine_name((body.engine or "").strip() or settings.engine, settings)
             rate = (body.rate or "").strip() or settings.rate or "+0%"
             formats = [f.strip() for f in (body.formats or ["m4b", "mp3"]) if f and f.strip()]
             if not formats:

@@ -126,12 +126,22 @@ class Settings:
     port: int = 8765
 
     # TTS
-    engine: str = "edge"
+    # "auto" = use Qwen-TTS when an API key is configured, otherwise Edge.
+    engine: str = "auto"
     model: str = "edge-neural"
     voice: str = "zh-CN-XiaoxiaoNeural"
     rate: str = "+0%"
-    # Number of concurrent synthesis requests inside the worker.
-    concurrency: int = 4
+    # Number of concurrent synthesis requests inside the worker.  Edge resets
+    # connections more often with higher concurrency, so 3 is the default.
+    concurrency: int = 3
+
+    # Qwen-TTS (Alibaba Cloud DashScope / 百炼).  Prefer the environment
+    # variable DASHSCOPE_API_KEY; a value here wins over the environment.
+    qwen_api_key: str = ""
+    qwen_model: str = "qwen-tts"
+    qwen_base_url: str = "https://dashscope.aliyuncs.com"
+    qwen_timeout: float = 60.0
+    qwen_voice: str = "Cherry"
 
     # External tools (absolute paths; auto-detected when empty)
     ffmpeg: str = ""
@@ -149,6 +159,19 @@ class Settings:
     @property
     def root(self) -> Path:
         return Path(self.data_dir)
+
+    @property
+    def qwen_key(self) -> str:
+        """DashScope API key: config value wins, then ``DASHSCOPE_API_KEY``."""
+        return (self.qwen_api_key or os.environ.get("DASHSCOPE_API_KEY", "")).strip()
+
+    @property
+    def resolved_engine(self) -> str:
+        """Concrete engine id for ``engine="auto"``."""
+        name = (self.engine or "auto").strip().lower()
+        if name != "auto":
+            return name
+        return "qwen" if self.qwen_key else "edge"
 
     @property
     def db_path(self) -> Path:

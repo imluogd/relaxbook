@@ -97,9 +97,15 @@ def parse_pdf(path: Path) -> ParsedBook:
             f"第 {displayed}{suffix} 页"
         )
 
+    # 记录被剔除的页眉页脚文本键：书签名恰好是被剔除的 running header 时不应告警。
+    removed_marker_keys = {
+        _match_key(marker) for marker in removed_markers if marker and _match_key(marker)
+    }
     chapters: list[ChapterDraft] = []
     if bookmarks:
-        chapters = _chapters_from_bookmarks(bookmarks, page_lines, warnings)
+        chapters = _chapters_from_bookmarks(
+            bookmarks, page_lines, warnings, removed_marker_keys
+        )
         if not chapters:
             warnings.append("PDF 书签未能定位到可读正文，改为按标题模式识别章节。")
     if not chapters:
@@ -264,6 +270,7 @@ def _chapters_from_bookmarks(
     bookmarks: list[tuple[str, int]],
     page_lines: list[list[str]],
     warnings: list[str],
+    removed_marker_keys: set[str] | None = None,
 ) -> list[ChapterDraft]:
     page_count = len(page_lines)
     valid: list[tuple[str, int]] = []
@@ -283,9 +290,16 @@ def _chapters_from_bookmarks(
         line_index = _find_title_line(page_lines[page], title)
         if line_index is None:
             line_index = 0
-            warnings.append(
-                f"PDF 书签“{title or '未命名'}”未能按标题在页内定位，按页首开始。"
+            # 书签名恰好是被剔除的跨页页眉页脚（running header）时，标题行是有意
+            # 移除的，直接从页首正文开始即可，不需要产生噪声告警。
+            title_key = _match_key(title)
+            is_removed_marker = bool(
+                removed_marker_keys and title_key and title_key in removed_marker_keys
             )
+            if not is_removed_marker:
+                warnings.append(
+                    f"PDF 书签“{title or '未命名'}”未能按标题在页内定位，按页首开始。"
+                )
         positioned.append((page, line_index, title))
     positioned.sort(key=lambda item: (item[0], item[1]))
 

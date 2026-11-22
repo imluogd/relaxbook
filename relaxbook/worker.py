@@ -495,7 +495,10 @@ class JobRunner:
         started = time.perf_counter()
         target = Path(target)
         token = uuid.uuid4().hex[:8]
-        mp3_temp = target.with_name(f".{target.name}.{token}.mp3")
+        # Engines may return WAV (Qwen) or MP3 (Edge); FFmpeg sniffs the
+        # content, but the suffix keeps temporary files honest for humans.
+        suffix = "." + str(getattr(engine, "audio_format", "mp3") or "mp3").lstrip(".")
+        mp3_temp = target.with_name(f".{target.name}.{token}{suffix}")
         wav_temp = target.with_name(f".{target.name}.{token}.wav")
         try:
             target.parent.mkdir(parents=True, exist_ok=True)

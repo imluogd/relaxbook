@@ -194,6 +194,7 @@ def _make_pdf(
     author: str = "",
     outline: list[tuple[str, int]] | None = None,
     header: str | None = None,
+    headers: list[str | None] | None = None,
     footer: str | None = None,
 ) -> Path:
     from fpdf import FPDF
@@ -204,11 +205,12 @@ def _make_pdf(
         pdf.set_title(title)
     if author:
         pdf.set_author(author)
-    for lines in pages:
+    for page_index, lines in enumerate(pages):
         pdf.add_page()
-        if header:
+        page_header = headers[page_index] if headers is not None else header
+        if page_header:
             pdf.set_font("Helvetica", size=9)
-            pdf.cell(0, 7, header, new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 7, page_header, new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("Helvetica", size=11)
         for line in lines:
             pdf.multi_cell(0, 6, line, new_x="LMARGIN", new_y="NEXT")
@@ -592,6 +594,42 @@ def test_pdf_bookmarks_define_chapter_ranges(tmp_path: Path) -> None:
     # 页脚被识别并剔除
     assert any("页眉页脚" in warning for warning in book.warnings)
     assert all("RelaxBook sample footer" not in chapter.text for chapter in book.chapters)
+
+
+def test_pdf_running_header_equal_to_bookmark_title_is_quiet(tmp_path: Path) -> None:
+    """跨页 running header 被剔除后，书签同名标题不应产生“未能定位”噪声告警。"""
+    pages = [
+        [
+            "Chapter One",
+            "The first chapter starts on this page with some prose.",
+            "It continues with a second sentence.",
+        ],
+        [
+            "Chapter Two",
+            "The second chapter begins here on its first page.",
+            "Its body continues for a while.",
+        ],
+        [
+            "Chapter Two",
+            "The second chapter spills onto a second page here.",
+            "The book then ends.",
+        ],
+    ]
+    pdf_path = _make_pdf(
+        tmp_path / "running-header.pdf",
+        pages=pages,
+        title="Running Header Book",
+        outline=[("Chapter One", 0), ("Chapter Two", 1)],
+        headers=["Chapter One", "Chapter Two", "Chapter Two"],
+    )
+    book = parse_pdf(pdf_path)
+    assert [chapter.title for chapter in book.chapters] == ["Chapter One", "Chapter Two"]
+    assert book.chapters[1].source_locator == {"pages": [2, 3]}
+    assert "second chapter begins" in book.chapters[1].text
+    assert "spills onto a second page" in book.chapters[1].text
+    # running header 被正确剔除，且没有“未能定位”噪声告警
+    assert any("页眉页脚" in warning for warning in book.warnings)
+    assert not any("未能按标题在页内定位" in warning for warning in book.warnings)
 
 
 def test_pdf_low_text_page_warns(tmp_path: Path) -> None:

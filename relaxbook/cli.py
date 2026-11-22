@@ -519,6 +519,33 @@ def _tts_checks(settings, info: dict[str, Any] | None) -> list[Check]:
                 "" if ok else "检查 relaxbook/tts 的内置音色清单是否完整",
             )
         )
+
+    # Qwen-TTS 是可选的云端引擎：未配置 Key 只提示，不阻塞任何功能。
+    try:
+        status = {str(row.get("name")): row for row in tts.engine_status(settings)}
+        qwen = status.get("qwen", {})
+        desk = status.get("edge", {})
+    except Exception:  # pragma: no cover - defensive
+        qwen, desk = {}, {}
+    if qwen.get("available"):
+        checks.append(
+            Check(
+                "Qwen-TTS（可选）",
+                OK,
+                "已配置 API Key，模型 %s%s"
+                % (qwen.get("model", ""), "（当前选用）" if qwen.get("selected") else ""),
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                "Qwen-TTS（可选）",
+                WARN,
+                "未配置 DASHSCOPE_API_KEY（当前使用 %s 引擎）" % (desk.get("name", "edge")),
+                "需要更自然的中文音色时：设置环境变量 DASHSCOPE_API_KEY 或在 config.json 填 qwen_api_key，"
+                "并把 engine 设为 qwen（或保持 auto）",
+            )
+        )
     return checks
 
 
@@ -595,41 +622,73 @@ def run_doctor(
             )
         )
 
-    # ffmpeg：M4B 内嵌章节标题需要 FFmpeg 7+；setup 安装的 imageio-ffmpeg 自带 9.0.2
-    ffmpeg_path = settings.ffmpeg or locate_tool("ffmpeg") or bundled_ffmpeg()
-    if not ffmpeg_path:
+    # ffmpeg：M4B 内嵌章节标题需要 FFmpeg 7+；setup 安装的 imageio-ffmpeg 自带 9.0.2。
+    # 配置里可能残留其它机器或已迁移目录的旧路径，按 配置 > 系统 PATH > imageio-ffmpeg 依次回退。
+    bundled = bundled_ffmpeg()
+    ffmpeg_candidates: list[tuple[str, str]] = []
+    if settings.ffmpeg:
+        ffmpeg_candidates.append((settings.ffmpeg, "配置项"))
+    system_ffmpeg = locate_tool("ffmpeg")
+    if system_ffmpeg and system_ffmpeg not in {path for path, _ in ffmpeg_candidates}:
+        ffmpeg_candidates.append((system_ffmpeg, "系统"))
+    if bundled and bundled not in {path for path, _ in ffmpeg_candidates}:
+        ffmpeg_candidates.append((bundled, "imageio-ffmpeg 自带"))
+    chosen_ffmpeg: tuple[str, str, str] | None = None
+    for path, source in ffmpeg_candidates:
+        usable, version_line = _tool_version(path, "-version")
+        if usable:
+            chosen_ffmpeg = (path, source, version_line)
+            break
+    if chosen_ffmpeg is None:
         checks.append(Check("ffmpeg", BLOCK, "未找到可用的 ffmpeg", _ffmpeg_fix(settings)))
     else:
-        usable, version_line = _tool_version(ffmpeg_path, "-version")
-        if not usable:
-            checks.append(Check("ffmpeg", BLOCK, version_line, _ffmpeg_fix(settings)))
+        chosen_path, chosen_source, version_line = chosen_ffmpeg
+        major = ffmpeg_major(chosen_path)
+        source_note = "（imageio-ffmpeg 自带）" if chosen_path == bundled else ""
+        if settings.ffmpeg and chosen_path != settings.ffmpeg:
+            checks.append(
+                Check(
+                    "ffmpeg",
+                    WARN,
+                    f"配置的 ffmpeg 不可用（{settings.ffmpeg}），已回退到{chosen_source}：{version_line}",
+                    f'删除 {settings.config_path} 里的 "ffmpeg" 字段后重跑 scripts/setup.ps1',
+                )
+            )
+        elif major >= MIN_FFMPEG_MAJOR:
+            checks.append(Check("ffmpeg", OK, f"版本 {major}{source_note}：{version_line}"))
+        elif major > 0:
+            checks.append(
+                Check(
+                    "ffmpeg",
+                    BLOCK,
+                    f"FFmpeg {major} 过旧，M4B 内嵌章节标题需要 {MIN_FFMPEG_MAJOR}+：{version_line}",
+                    _ffmpeg_fix(settings),
+                )
+            )
         else:
-            major = ffmpeg_major(ffmpeg_path)
-            source = "（imageio-ffmpeg 自带）" if ffmpeg_path == bundled_ffmpeg() else ""
-            if major >= MIN_FFMPEG_MAJOR:
-                checks.append(Check("ffmpeg", OK, f"{version_line}{source}"))
-            elif major > 0:
-                checks.append(
-                    Check(
-                        "ffmpeg",
-                        BLOCK,
-                        f"FFmpeg {major} 过旧，M4B 内嵌章节标题需要 {MIN_FFMPEG_MAJOR}+：{version_line}",
-                        _ffmpeg_fix(settings),
-                    )
+            checks.append(
+                Check(
+                    "ffmpeg",
+                    WARN,
+                    f"无法识别版本，M4B 章节标题需要 {MIN_FFMPEG_MAJOR}+：{version_line}",
+                    _ffmpeg_fix(settings),
                 )
-            else:
-                checks.append(
-                    Check(
-                        "ffmpeg",
-                        WARN,
-                        f"无法识别版本，M4B 章节标题需要 {MIN_FFMPEG_MAJOR}+：{version_line}",
-                        _ffmpeg_fix(settings),
-                    )
-                )
+            )
 
     # ffprobe：系统提供（imageio-ffmpeg 只带 ffmpeg，不含 ffprobe），用于校验成品
-    ffprobe_path = settings.ffprobe or locate_tool("ffprobe")
-    if not ffprobe_path:
+    ffprobe_candidates: list[tuple[str, str]] = []
+    if settings.ffprobe:
+        ffprobe_candidates.append((settings.ffprobe, "配置项"))
+    system_ffprobe = locate_tool("ffprobe")
+    if system_ffprobe and system_ffprobe not in {path for path, _ in ffprobe_candidates}:
+        ffprobe_candidates.append((system_ffprobe, "系统"))
+    chosen_ffprobe: tuple[str, str, str] | None = None
+    for path, source in ffprobe_candidates:
+        usable, version_line = _tool_version(path, "-version")
+        if usable:
+            chosen_ffprobe = (path, source, version_line)
+            break
+    if chosen_ffprobe is None:
         checks.append(
             Check(
                 "ffprobe",
@@ -639,11 +698,18 @@ def run_doctor(
             )
         )
     else:
-        usable, version_line = _tool_version(ffprobe_path, "-version")
-        if usable:
-            checks.append(Check("ffprobe", OK, version_line))
+        chosen_path, chosen_source, version_line = chosen_ffprobe
+        if settings.ffprobe and chosen_path != settings.ffprobe:
+            checks.append(
+                Check(
+                    "ffprobe",
+                    WARN,
+                    f"配置的 ffprobe 不可用（{settings.ffprobe}），已回退到{chosen_source}：{version_line}",
+                    f'删除 {settings.config_path} 里的 "ffprobe" 字段后重跑 scripts/setup.ps1',
+                )
+            )
         else:
-            checks.append(Check("ffprobe", BLOCK, version_line, _ffprobe_fix(settings)))
+            checks.append(Check("ffprobe", OK, version_line))
 
     # calibre（可选；缺失只影响 MOBI/AZW3）
     calibre = settings.calibre_convert or locate_tool("ebook-convert")

@@ -6,13 +6,11 @@
 
 准备 Python 3.11、带 AAC 和 libmp3lame 编码器的 FFmpeg（含 ffprobe），以及 calibre 的 ebook-convert。将两个工具目录加入 PATH，或在 `relaxbook.local.json` 中填写它们的完整路径。模型安装一次后即可在本机离线合成。
 
-在仓库根目录执行。Windows PowerShell 使用以下命令：
+先按下文配置至少一种 Qwen 转换方式，再在仓库根目录运行以下命令。Windows 使用 PowerShell。
 
 ```powershell
 py -3.11 -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
-.venv\Scripts\python.exe -m relaxbook setup
-.venv\Scripts\python.exe -m relaxbook setup-voices
 .venv\Scripts\python.exe -m relaxbook doctor
 .venv\Scripts\python.exe -m relaxbook start
 ```
@@ -22,8 +20,6 @@ macOS 和 Linux 使用以下命令：
 ```sh
 python3.11 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m relaxbook setup
-.venv/bin/python -m relaxbook setup-voices
 .venv/bin/python -m relaxbook doctor
 .venv/bin/python -m relaxbook start
 ```
@@ -40,7 +36,7 @@ Qwen 合成会把待朗读的文字发送给百炼，可能按字符计费。书
 
 ### 使用 Qwen3-TTS 离线音色
 
-在 x86-64 Linux 或 Windows 的 WSL 中运行 Qwen3-TTS 1.7B CustomVoice，使用 CPU 和 Serena 音色。首次安装需联网，运行器和模型约 1.34 GB，下载文件和解压后的运行器保存在仓库的 `.local/qwen3-tts`。安装完成后，合成只访问本机回环端口。
+在 x86-64 Linux 或 Windows 的 WSL 中运行 Qwen3-TTS 1.7B CustomVoice。Vivian、Serena 和 Uncle_Fu 共用一个模型，均可在 CPU 上运行。首次安装需联网，运行器和模型约 1.34 GB，安装在仓库的 `.local/qwen3-tts`。安装完成后，合成只访问本机回环端口。
 
 在仓库根目录运行。脚本需要 Ubuntu 等 Linux 环境中的 `bash`、`curl`、`python3`、`sha256sum` 和 `flock`。Windows PowerShell 可使用现有 WSL 发行版，Linux 上省略命令前的 `wsl.exe`。
 
@@ -49,33 +45,23 @@ wsl.exe bash scripts/qwen-local.sh setup
 wsl.exe bash scripts/qwen-local.sh serve
 ```
 
-保持模型服务的终端运行。在 `relaxbook.local.json`（或 `RELAXBOOK_CONFIG` 指定的文件）中设 `"qwen_local_port": 8777`，然后启动或重启 RelaxBook。网页中选择「Qwen3-TTS · Serena（离线）」，即可试听或生成整书。端口占用时可用 `serve 8877`，并将配置中的端口改为相同值。已有兼容的本机 speech.cpp 服务也可以直接配置其端口。
+保持模型服务的终端运行。在 `relaxbook.local.json`（或 `RELAXBOOK_CONFIG` 指定的文件）中设 `"qwen_local_port": 8777`，然后启动或重启 RelaxBook。网页可试听三种离线音色，也可在整书音色下拉框中选择任一音色生成。端口占用时可用 `serve 8877`，并将配置中的端口改为相同值。已有兼容的本机 speech.cpp 服务也可以直接配置其端口。
 
 安装脚本校验固定版本的运行器和模型。下载中断可重新运行 `setup` 续传。也可以从以下发布页下载 `speech-0.11.2-linux-x64-cpu.zip` 和 `Qwen3-TTS-12Hz-1.7B-CustomVoice-Q4_K.gguf`，放在 `.local/qwen3-tts` 后运行 `setup` 校验并解压。网页提供联机和离线选项。选定离线音色后，服务不可用时结果页会提示检查服务再重试。[运行器发布页](https://github.com/nyosegawa/speech.cpp/releases/tag/v0.11.2) · [量化模型](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF)
 
-### 使用微软在线音色
-
-安装可选依赖 `python -m pip install -r requirements-edge.txt`，在 `relaxbook.local.json` 中把 `microsoft_online` 设为 `true`，再重启。启动虚拟环境中的 Python 执行命令。可选择晓晓、云扬和英文 Jenny，离线音色仍可选择。
-
-微软音色通过 [edge-tts](https://github.com/rany2/edge-tts) 调用 Edge 在线朗读服务，无需 Azure API 密钥。使用该音色时，待朗读的文字会发送到微软服务，书籍文件、导出的音频和转换进度保存在本机。联网合成失败时可在结果页重试，已完成的片段从本机缓存复用。该服务与 [Azure Speech 正式计费接口](https://azure.microsoft.com/en-us/pricing/details/speech/) 分开。Edge 在线朗读服务的可用性和限制由微软决定。
-
-`setup-voices` 安装可选的两套离线普通话语音包，压缩下载合计约 286 MB。安装后重新启动网页，即可试听 Melo 中英混读女声及 VITS 的五种普通话音色。只使用离线音色时，网页优先选择 Melo，原 Kokoro 音色仍可用于对照和续跑。在同一段正文上保持语速一致，勾选多个音色进行比较。要给已完成的书换音色，请在原书页面选择新音色并再次生成。语音合成在本机完成。
-
-Melo 的原生采样率为 44.1 kHz，VITS 普通话语音包为 16 kHz。转换保留引擎的原生采样率，M4B 按实际样本数计算章节时间。新语音片段使用有限的增益调整，并为编码留出峰值余量。M4B 使用更高的 AAC 码率，MP3 使用 LAME 可变码率质量档 2。试听可以区分朗读节奏和音色，采样率和码率只反映音频格式。
-
 复制 `relaxbook.example.json` 为 `relaxbook.local.json` 可调整端口、工具路径、`data_dir` 和 `model_dir`。也可通过环境变量 `RELAXBOOK_CONFIG` 指向配置文件。默认的数据库及模型位于 Windows 的 `%LOCALAPPDATA%\RelaxBook` 或 macOS/Linux 的 `~/.local/share/RelaxBook`。浏览器关闭后，启动终端继续运行转换。退出并重启后，在结果页点击「继续」恢复中断任务。
+
+使用早期音色生成的成品可在历史任务中下载。继续这些任务时，请使用原来的模型、配置和 Python 环境。
 
 ## 验证开发版本
 
-这版采用自己的本地网页和任务管理，直接复用 Kokoro、FFmpeg、calibre 和 PDF 解析库。预先启动一个空数据目录的实例，随后在仓库根目录运行下方命令。Windows 将 `python` 换成虚拟环境的 `.venv\Scripts\python.exe`，设置 `$env:PYTHONPATH = '.'`；macOS/Linux 先运行 `export PYTHONPATH=.`。
+用空数据目录启动 RelaxBook，并启用 Qwen3-TTS 离线服务。随后在仓库根目录运行下方命令。Windows 将 `python` 换成虚拟环境的 `.venv\Scripts\python.exe`，运行前设置 `$env:PYTHONPATH = '.'`。macOS/Linux 先运行 `export PYTHONPATH=.`。
 
 ```sh
 python tests/smoke.py http://127.0.0.1:8765 path/to/evidence
 ```
 
-该检查生成三章 EPUB，调用当前安装的 sherpa-onnx 离线音色，核对真实 M4B 章节、分章 MP3、ZIP 和结果数据。Qwen 两种模式的核对步骤、真机播放和换机复装见 [验收清单](docs/ACCEPTANCE.md)。
-
-分支采用 Spec 中的独立实现基线，直接集成 [sherpa-onnx Kokoro](https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/kokoro.html)，以便复用语音片段并单独重试封装。abogen 和 ebook2audiobook 的完整 Web 界面实测对比仍待补充。首版的扫描件会提示 OCR，复杂版式和分章错误可通过网页检查并编辑正文。
+该检查验证三种离线音色试听，从三章 EPUB 生成并核对 M4B 章节、分章 MP3、ZIP 和结果数据。Qwen 两种模式的核对步骤、真机播放和换机复装见 [验收清单](docs/ACCEPTANCE.md)。
 
 Windows 首轮实测覆盖四种可读格式、扫描 PDF 提示、三种普通话及一种英文样音、浏览器下载、M4B 与 MP3 文件核对、工作进程退出后续跑，以及封装失败后的重试。换机复装、Android/iOS 真机和真实长书听感按验收清单继续记录。
 

@@ -2,7 +2,6 @@
   "port": 8765,
   "threads": 2,
   "qwen_local_port": null,
-  "microsoft_online": false,
   "ffmpeg": "ffmpeg",
   "ffprobe": "ffprobe",
   "calibre": "ebook-convert"

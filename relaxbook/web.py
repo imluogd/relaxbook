@@ -63,7 +63,7 @@ def find(kind, key, db=None):
 def voice_by_id(voice_id):
     voice = next((v for v in voice_options(config) if v["id"] == voice_id), None)
     if voice is None:
-        raise HTTPException(422, "请选择已安装的音色。")
+        raise HTTPException(422, "请选择已配置的 Qwen 音色。")
     return voice
 
 
@@ -191,13 +191,13 @@ def preview_audio(key: str):
 
 @app.post("/api/jobs", status_code=202)
 def create_job(request: JobInput):
-    voice = voice_by_id(request.voice)
     with store.connect(write=True) as db:
         book = find("book", request.book_id, db)
         existing = [j for j in store.all(db, "job") if j["book_id"] == book["id"]]
         duplicate = next((j for j in existing if j["request_id"] == request.request_id), None)
         if duplicate:
             return {"job_id": duplicate["id"]}
+        voice = voice_by_id(request.voice)
         if request.revision != book.get("revision"):
             raise HTTPException(409, "请打开并核对最新章节版本。")
         revision = find("revision", request.revision, db)

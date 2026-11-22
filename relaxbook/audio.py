@@ -6,43 +6,23 @@ import re
 import subprocess
 import wave
 from functools import cached_property
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from importlib.util import find_spec
 from pathlib import Path
-
-import sherpa_onnx
 
 from . import qwen, qwen_local
 
 LOG = logging.getLogger(__name__)
 MODEL_NAME = "kokoro-int8-multi-lang-v1_1"
-VOICES = [
-    {"id": 53, "label": "普通话 53", "language": "zh"},
-    {"id": 54, "label": "普通话 54", "language": "zh"},
-    {"id": 58, "label": "普通话 58", "language": "zh"},
-    {"id": 0, "label": "English 0", "language": "en"},
-]
-
-EDGE_VOICES = [
-    {"id": key, "label": f"微软 · {label}（联网）", "language": language,
-     "engine": "edge", "speaker": speaker}
-    for key, label, language, speaker in [
-        (200, "晓晓", "zh", "zh-CN-XiaoxiaoNeural"),
-        (201, "云扬", "zh", "zh-CN-YunyangNeural"),
-        (203, "Jenny", "en", "en-US-JennyNeural"),
-    ]
-]
-
+# Model locations used by jobs created before the Qwen-only voice catalog.
 VOICE_PACKS = {
     "melo": {
         "directory": "vits-melo-tts-zh_en",
         "sha256": "e58351ed7149f290a54534538badd4077cdbe6fddc964b24d0bee870415d1514",
-        "voices": [(100, 0, "Melo · 中英混读")],
     },
     "vits": {
         "directory": "sherpa-onnx-vits-zh-ll",
         "sha256": "f7393d1bbc59709d5f52ea76cd5bceeec62f6a29f9c1f79ff64b4c15ec841f3a",
-        "voices": [(110 + i, i, f"VITS · 普通话 {i + 1}") for i in range(5)],
     },
 }
 
@@ -54,15 +34,8 @@ def pack_directory(config, pack):
 def voice_options(config):
     options = qwen.VOICES.copy() if qwen.api_key() else []
     if config.get("qwen_local_port") is not None:
-        options.append(qwen_local.VOICE)
-    if config.get("microsoft_online") and find_spec("edge_tts"):
-        options.extend(EDGE_VOICES)
-    for engine, pack in VOICE_PACKS.items():
-        directory = pack_directory(config, pack)
-        if all((directory / name).is_file() for name in ("model.onnx", "lexicon.txt", "tokens.txt")):
-            options.extend({"id": key, "speaker": sid, "label": label, "language": "zh", "engine": engine}
-                           for key, sid, label in pack["voices"])
-    return options + VOICES
+        options.extend(qwen_local.VOICES)
+    return options
 
 
 def chunks(text, limit=160):
@@ -140,7 +113,11 @@ class Narrator:
     def fingerprint(self):
         if not self.model.is_file():
             raise ValueError("本机缺少所选音色的模型，请运行 setup 或 setup-voices。")
-        digest = hashlib.sha256(f"{self.cache_version}:sherpa-onnx-{version('sherpa-onnx')}".encode())
+        try:
+            runtime = version("sherpa-onnx")
+        except PackageNotFoundError:
+            raise ValueError("继续这个历史任务需安装原来的 sherpa-onnx 依赖。") from None
+        digest = hashlib.sha256(f"{self.cache_version}:sherpa-onnx-{runtime}".encode())
         for path in sorted(self.directory.rglob("*")):
             if path.is_file() and path.name not in {"README.md", "LICENSE"}:
                 digest.update(path.relative_to(self.directory).as_posix().encode())
@@ -153,6 +130,8 @@ class Narrator:
 
     @cached_property
     def engine(self):
+        import sherpa_onnx
+
         d = self.directory
         config = sherpa_onnx.OfflineTtsConfig(
             model=sherpa_onnx.OfflineTtsModelConfig(
@@ -195,6 +174,8 @@ class Narrator:
         return path
 
     def synthesize(self, text, voice, speed, output):
+        import sherpa_onnx
+
         audio = self.engine.generate(text, sid=voice.get("speaker", voice["id"]), speed=speed)
         if not sherpa_onnx.write_wave(str(output), self.prepare_samples(audio.samples), audio.sample_rate):
             raise RuntimeError("无法写入语音片段。")
@@ -212,6 +193,8 @@ class VitsNarrator(Narrator):
 
     @cached_property
     def engine(self):
+        import sherpa_onnx
+
         d = self.directory
         config = sherpa_onnx.OfflineTtsConfig(
             model=sherpa_onnx.OfflineTtsModelConfig(

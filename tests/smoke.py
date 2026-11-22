@@ -1,7 +1,6 @@
 """Run against an isolated RelaxBook instance with the real model and codecs."""
 import io
 import json
-import subprocess
 import sys
 import time
 import zipfile
@@ -58,18 +57,23 @@ def main():
     for chapter, (_, expected) in zip(book["chapters"], CHAPTERS):
         body = api(f"books/{book_id}/chapters/{chapter['id']}")["text"]
         assert expected in body
-    voices = [voice for voice in api("voices") if voice.get("engine") in {None, "melo", "vits"}]
-    assert sum(v["language"] == "zh" for v in voices) >= 3
+    available = api("voices")
+    assert all(voice["engine"] in {"qwen", "qwen_local"} for voice in available)
+    voices = [voice for voice in available if voice["engine"] == "qwen_local"]
+    assert {voice["speaker"] for voice in voices} == {"serena", "vivian", "uncle_fu"}
+    chosen = next(voice for voice in voices if voice["speaker"] == "uncle_fu")
     for voice in voices:
-        sample = CHAPTERS[0][1] if voice["language"] == "zh" else "The morning train left the station."
+        sample = "清晨的列车驶出站台。"
         preview = api("previews", "POST", {"text": sample, "voice": voice["id"], "speed": 1})["id"]
         result = wait(f"previews/{preview}", {"complete"})
+        assert result["voice"] == voice
         assert request(result["url"])[:4] == b"RIFF"
-    config = {"book_id": book_id, "revision": book["revision"], "voice": voices[0]["id"],
+    config = {"book_id": book_id, "revision": book["revision"], "voice": chosen["id"],
               "speed": 1, "request_id": "smoke-" + str(time.time_ns())}
     job_id = api("jobs", "POST", config)["job_id"]
     assert api("jobs", "POST", config)["job_id"] == job_id
-    result = wait(f"jobs/{job_id}", {"complete"})
+    result = wait(f"jobs/{job_id}", {"complete"}, seconds=600)
+    assert result["voice"] == chosen
     assert result["completed_chapters"] == result["planned_chapters"] == 3
     names = ["001 - 序言.mp3", "002 - 出发.mp3", "003 - 出发.mp3"]
     for i, (row, name) in enumerate(zip(result["chapters"], names)):

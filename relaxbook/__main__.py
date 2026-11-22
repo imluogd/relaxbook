@@ -14,7 +14,7 @@ import uvicorn
 from filelock import FileLock, Timeout
 
 from . import qwen_local
-from .audio import MODEL_NAME, VOICES, VOICE_PACKS, Narrator, VitsNarrator, pack_directory, voice_options
+from .audio import MODEL_NAME, VOICE_PACKS, Narrator, pack_directory, voice_options
 from .store import Store, settings
 from .worker import run_worker
 
@@ -66,23 +66,11 @@ def doctor(config):
                 print(result.stdout.splitlines()[0])
                 continue
         failures.append(f"{name} unavailable: {config[name]}")
-    try:
-        narrator = Narrator(config["model_dir"], config["threads"])
-        print(f"Kokoro model fingerprint {narrator.fingerprint[:16]}")
-        audio = narrator.engine.generate("你好，欢迎使用 RelaxBook。", sid=VOICES[0]["id"])
-        if not len(audio.samples):
-            raise ValueError("语音模型测试返回空音频。")
-        print("Kokoro rendered an offline voice sample.")
-        for engine, pack in VOICE_PACKS.items():
-            candidate = VitsNarrator(pack_directory(config, pack), config["threads"])
-            if candidate.model.is_file():
-                generated = candidate.engine.generate("雨停了，书店已经开门。", sid=0)
-                if not len(generated.samples):
-                    raise ValueError(f"{engine} 语音模型测试返回空音频。")
-                print(f"{engine}: offline sample at {generated.sample_rate} Hz.")
-        print(f"{len(voice_options(config))} voice options.")
-    except Exception as error:
-        failures.append(str(error))
+    voices = voice_options(config)
+    if voices:
+        print(f"{len(voices)} Qwen voice options configured.")
+    else:
+        failures.append("请配置百炼 DASHSCOPE_API_KEY 或本机 qwen_local_port。")
     if (port := config.get("qwen_local_port")) is not None:
         try:
             engine, quantization, _ = qwen_local.model_details(port)

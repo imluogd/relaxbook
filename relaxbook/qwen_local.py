@@ -5,8 +5,15 @@ import wave
 
 
 MODEL = "Qwen3-TTS-12Hz-1.7B-CustomVoice"
-VOICE = {"id": 310, "label": "Qwen3-TTS · Serena（离线）",
-         "language": "zh", "engine": "qwen_local", "speaker": "serena"}
+VOICES = [
+    {"id": key, "label": f"Qwen3-TTS · {name}（离线）",
+     "language": "zh", "engine": "qwen_local", "speaker": speaker}
+    for key, name, speaker in [
+        (310, "Serena", "serena"),
+        (311, "Vivian", "vivian"),
+        (312, "Uncle_Fu", "uncle_fu"),
+    ]
+]
 INSTRUCTION = "用普通话以正常语速朗读。语气平实自然，长句连贯，按标点自然停顿。"
 SAMPLE_RATE = 24000
 
@@ -40,7 +47,8 @@ def model_details(port):
         if model is not None:
             speech = model["speech"]
             voices = {voice["name"] for voice in speech["voices"]}
-            if VOICE["speaker"] in voices and speech["sample_rate"] == SAMPLE_RATE:
+            required = {voice["speaker"] for voice in VOICES}
+            if required <= voices and speech["sample_rate"] == SAMPLE_RATE:
                 return model["version"], speech["weight_type"], speech["source"]["revision"]
     except (ValueError, KeyError, TypeError):
         pass

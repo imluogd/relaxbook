@@ -50,13 +50,13 @@
           <label for="sample">试听文字（最多 400 字）</label><textarea id="sample" rows="3" maxlength="400"></textarea>
           <div id="voice-options" class="actions"></div>
           <p id="qwen-voice-notice" class="muted" hidden>使用 Qwen 在线音色时，待朗读的文字会发送到阿里云百炼，可能按字符计费。</p>
-          <p id="qwen-local-notice" class="muted" hidden>本地 Serena 由本机 Qwen3-TTS 服务生成。使用前请保持本地模型服务运行。</p>
-          <p id="online-voice-notice" class="muted" hidden>使用微软音色时，试听文字或书籍正文会发送到微软在线服务。</p>
-          <button id="preview">生成所选样音</button><div id="samples" aria-live="polite"></div>
+          <p id="qwen-local-notice" class="muted" hidden>使用离线音色时，请保持本机 Qwen3-TTS 服务运行。</p>
+          <p id="no-voices" class="muted" hidden>请先配置百炼 API Key 或本机 Qwen3-TTS 服务，再刷新页面。</p>
+          <button id="preview" disabled>生成所选样音</button><div id="samples" aria-live="polite"></div>
           <div class="actions generation">
-            <label for="voice">整书音色</label><select id="voice"></select>
+            <label for="voice">整书音色</label><select id="voice" disabled></select>
             <label for="speed">语速</label><input id="speed" type="number" value="1" min="0.7" max="1.5" step="0.05">
-            <button id="generate" class="primary">生成有声书</button>
+            <button id="generate" class="primary" disabled>生成有声书</button>
           </div>
         </section>
         <section class="card">

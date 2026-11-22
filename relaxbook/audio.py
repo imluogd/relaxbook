@@ -12,7 +12,7 @@ from pathlib import Path
 
 import sherpa_onnx
 
-from . import qwen
+from . import qwen, qwen_local
 
 LOG = logging.getLogger(__name__)
 MODEL_NAME = "kokoro-int8-multi-lang-v1_1"
@@ -52,7 +52,9 @@ def pack_directory(config, pack):
 
 
 def voice_options(config):
-    options = [qwen.VOICE.copy()] if qwen.api_key() else []
+    options = qwen.VOICES.copy() if qwen.api_key() else []
+    if config.get("qwen_local_port") is not None:
+        options.append(qwen_local.VOICE)
     if config.get("microsoft_online") and find_spec("edge_tts"):
         options.extend(EDGE_VOICES)
     for engine, pack in VOICE_PACKS.items():
@@ -76,7 +78,14 @@ def chunks(text, limit=160):
 
 
 def speech_chunks(text, voice):
-    if voice.get("engine") not in {"edge", "qwen"}:
+    engine = voice.get("engine")
+    if engine == "qwen_local":
+        for paragraph in text.splitlines():
+            sentences = re.findall(r"[^。！？!?]*[。！？!?]+[”’」』）)]*|[^。！？!?]+$", paragraph)
+            for start in range(0, len(sentences), 3):
+                yield from chunks("".join(sentences[start:start + 3]), limit=120)
+        return
+    if engine not in {"edge", "qwen"}:
         yield from chunks(text)
         return
     # Keep paragraph breaks and punctuation in the same request where possible.
@@ -273,7 +282,8 @@ class QwenNarrator(Narrator):
     @cached_property
     def fingerprint(self):
         instruction = hashlib.sha256(qwen.INSTRUCTION.encode()).hexdigest()
-        return f"qwen-websocket-v1:{qwen.MODEL}:{qwen.VOICE['speaker']}:{instruction}"
+        # Keep the original fingerprint so interrupted 龙安灵心 jobs can resume.
+        return f"qwen-websocket-v1:{qwen.MODEL}:{qwen.VOICES[0]['speaker']}:{instruction}"
 
     def synthesize(self, text, voice, speed, output):
         key = qwen.api_key()
@@ -284,6 +294,31 @@ class QwenNarrator(Narrator):
         try:
             source.write_bytes(audio)
             decode_online_audio(self.ffmpeg, source, output, qwen.SAMPLE_RATE)
+        finally:
+            source.unlink(missing_ok=True)
+
+
+class LocalQwenNarrator(Narrator):
+    def __init__(self, config):
+        self.port = config.get("qwen_local_port")
+        self.ffmpeg = config["ffmpeg"]
+
+    @cached_property
+    def fingerprint(self):
+        engine, quantization, revision = qwen_local.model_details(self.port)
+        instruction = hashlib.sha256(qwen_local.INSTRUCTION.encode()).hexdigest()
+        return f"qwen-local-v1:{qwen_local.MODEL}:{engine}:{quantization}:{revision}:{instruction}"
+
+    def synthesize(self, text, voice, speed, output):
+        audio = qwen_local.synthesize(self.port, text, voice["speaker"])
+        if speed == 1:
+            output.write_bytes(audio)
+            return
+        source = output.with_suffix(".native.wav")
+        try:
+            source.write_bytes(audio)
+            run([self.ffmpeg, "-nostdin", "-v", "error", "-xerror", "-y", "-i", source,
+                 "-af", f"atempo={speed}", "-c:a", "pcm_s16le", output], timeout=30)
         finally:
             source.unlink(missing_ok=True)
 

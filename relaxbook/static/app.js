@@ -327,6 +327,7 @@ async function init() {
   try {
     state.voices = await api("voices");
     $("qwen-voice-notice").hidden = !state.voices.some((voice) => voice.engine === "qwen");
+    $("qwen-local-notice").hidden = !state.voices.some((voice) => voice.engine === "qwen_local");
     $("online-voice-notice").hidden = !state.voices.some((voice) => voice.engine === "edge");
     for (const [index, voice] of state.voices.entries()) {
       const option = element("option", voice.label, $("voice"));

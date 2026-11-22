@@ -14,7 +14,9 @@
 
 **需要补功能时的实现基线。** Python 3.11、FastAPI、Jinja2 模板和少量 JavaScript 提供本地网页。SQLite 保存任务和编辑稿，单独的 Python 工作进程执行转换。浏览器每两秒查询状态。复用 calibre 做格式转换、pypdf 与 pdfplumber 读 PDF 书签和文本、FFmpeg 与 ffprobe 封装并检查音频。优先调用候选工具公开支持的入口；仅有整书调用能力时，可按已确认的章节或文本片段分别传入，并由本项目管理重试。若适配成本超过直接集成语音引擎的成本，采用下述本地 TTS 接口。上述是本项目的设计选择，第三方工具内置的私有 HTTP 接口不作为依赖。
 
-用户在《爱弥儿》同文试听中选定 Qwen 龙安灵心有声书朗读指令版。配置北京地域的 `DASHSCOPE_API_KEY` 后，试听和整书默认使用 `qwen-audio-3.1-tts-plus`、`longanlingxin_v3.1` 和同一朗读指令。应用经 WebSocket 向百炼发送朗读片段，按服务用量计费。音频缓存、章节管理与封装在本机执行。[百炼语音合成](https://help.aliyun.com/zh/model-studio/qwen-audio-3-1-tts-plus)
+用户在《爱弥儿》同文试听中选定 Qwen 龙安灵心有声书朗读指令版。配置北京地域的 `DASHSCOPE_API_KEY` 后，线上音色使用 `qwen-audio-3.1-tts-plus`，提供龙安灵心、许南川、龙安欢和龙安风悦，默认龙安灵心。试听和整书把选定的音色与有声书朗读指令通过 WebSocket 发送给百炼，按服务用量计费。音频缓存、章节管理与封装在本机执行。[百炼音色列表](https://help.aliyun.com/zh/model-studio/qwen-audio-tts-voice-list)
+
+Qwen3-TTS 1.7B CustomVoice 是离线方案，使用 Serena 和短版普通话朗读指令。配置 `qwen_local_port` 后，工作进程通过回环地址调用本机 speech.cpp。正文按完整句子分段，超长句优先按内部标点拆分。只使用正常结束且通过检查的 WAV 片段，设置语速时在本机用 FFmpeg 调整。试听和整书共用合成和缓存逻辑。
 
 断网时可使用本地语音。离线基线采用 sherpa-onnx 的中英双语 Kokoro 模型，按包内映射加载音色，支持 CPU。首次下载模型并校验后即可在本机生成音频。解析目录、清理正文与封装音频使用常规程序，核心流程只需 TTS。[模型与运行说明](https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/kokoro.html)
 

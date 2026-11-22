@@ -58,7 +58,7 @@ def main():
     for chapter, (_, expected) in zip(book["chapters"], CHAPTERS):
         body = api(f"books/{book_id}/chapters/{chapter['id']}")["text"]
         assert expected in body
-    voices = [voice for voice in api("voices") if voice.get("engine") not in {"qwen", "edge"}]
+    voices = [voice for voice in api("voices") if voice.get("engine") in {None, "melo", "vits"}]
     assert sum(v["language"] == "zh" for v in voices) >= 3
     for voice in voices:
         sample = CHAPTERS[0][1] if voice["language"] == "zh" else "The morning train left the station."

@@ -13,8 +13,16 @@ INSTRUCTION = (
 )
 SAMPLE_RATE = 24000
 ENDPOINT = "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
-VOICE = {"id": 300, "label": "Qwen · 龙安灵心 · 有声书朗读指令（联网）",
-         "language": "zh", "engine": "qwen", "speaker": "longanlingxin_v3.1"}
+VOICES = [
+    {"id": key, "label": f"Qwen · {name} · 有声书朗读指令（联网）", "language": "zh",
+     "engine": "qwen", "speaker": speaker}
+    for key, name, speaker in [
+        (300, "龙安灵心", "longanlingxin_v3.1"),
+        (301, "许南川", "xunanchuan_v3.1"),
+        (302, "龙安欢", "longanhuan_v3.1"),
+        (303, "龙安风悦", "longanfengyue_v3.1"),
+    ]
+]
 
 
 def api_key():

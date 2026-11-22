@@ -13,6 +13,7 @@ from urllib.request import urlopen
 import uvicorn
 from filelock import FileLock, Timeout
 
+from . import qwen_local
 from .audio import MODEL_NAME, VOICES, VOICE_PACKS, Narrator, VitsNarrator, pack_directory, voice_options
 from .store import Store, settings
 from .worker import run_worker
@@ -82,6 +83,12 @@ def doctor(config):
         print(f"{len(voice_options(config))} voice options.")
     except Exception as error:
         failures.append(str(error))
+    if (port := config.get("qwen_local_port")) is not None:
+        try:
+            engine, quantization, _ = qwen_local.model_details(port)
+            print(f"Local Qwen3-TTS ready on port {port} (speech.cpp {engine}, {quantization}).")
+        except RuntimeError as error:
+            failures.append(str(error))
     print(f"Data directory: {config['data_dir']}")
     print(f"Free disk: {shutil.disk_usage(config['data_dir']).free / 1024**3:.1f} GiB")
     for error in failures:
@@ -128,8 +135,8 @@ def main():
     parser = argparse.ArgumentParser(prog="python -m relaxbook")
     parser.add_argument("command", choices=["setup", "setup-voices", "doctor", "start"])
     command = parser.parse_args().command
-    config = settings()
     try:
+        config = settings()
         if command == "setup":
             setup(config)
         elif command == "setup-voices":

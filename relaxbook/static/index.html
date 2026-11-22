@@ -49,7 +49,8 @@
           <h3>音色试听</h3>
           <label for="sample">试听文字（最多 400 字）</label><textarea id="sample" rows="3" maxlength="400"></textarea>
           <div id="voice-options" class="actions"></div>
-          <p id="qwen-voice-notice" class="muted" hidden>使用 Qwen 音色时，待朗读的文字会发送到阿里云百炼，可能按字符计费。</p>
+          <p id="qwen-voice-notice" class="muted" hidden>使用 Qwen 在线音色时，待朗读的文字会发送到阿里云百炼，可能按字符计费。</p>
+          <p id="qwen-local-notice" class="muted" hidden>本地 Serena 由本机 Qwen3-TTS 服务生成。使用前请保持本地模型服务运行。</p>
           <p id="online-voice-notice" class="muted" hidden>使用微软音色时，试听文字或书籍正文会发送到微软在线服务。</p>
           <button id="preview">生成所选样音</button><div id="samples" aria-live="polite"></div>
           <div class="actions generation">

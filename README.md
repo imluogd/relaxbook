@@ -30,13 +30,28 @@ python3.11 -m venv .venv
 
 浏览器打开 [本机书库](http://127.0.0.1:8765)。选择电子书并检查章节，试听音色后点击「生成有声书」。完成后下载 M4B 导入手机，也可以逐章下载 MP3 或打包下载。
 
-### 使用 Qwen 龙安灵心
+### 使用百炼 Qwen 在线音色
 
 在运行 RelaxBook 的电脑上配置阿里云百炼华北 2（北京）的 `DASHSCOPE_API_KEY`。Windows 可搜索「编辑账户的环境变量」，添加同名的用户变量。macOS 和 Linux 在启动进程的环境中设置。密钥留在本机，避免写入项目配置或提交到 Git。[获取百炼 API Key](https://help.aliyun.com/zh/model-studio/get-api-key)
 
-检测到密钥时，网页默认选择「Qwen · 龙安灵心 · 有声书朗读指令」。试听和整书使用同一个 `qwen-audio-3.1-tts-plus` 模型、音色和朗读指令。使用北京 WebSocket 接入，只需配置 API Key。在已有安装上更新代码后，先用当前虚拟环境执行 `python -m pip install -r requirements.txt`，再重启网页服务。
+检测到密钥时，网页提供 `qwen-audio-3.1-tts-plus` 的四种系统音色：龙安灵心、许南川、龙安欢和龙安风悦。龙安灵心默认选中。试听可勾选多个音色，整书按下拉框中选定的音色生成。四种音色共用有声书朗读指令。北京 WebSocket 接入只需配置 API Key。在已有安装上更新代码后，先用当前虚拟环境执行 `python -m pip install -r requirements.txt`，再重启网页服务。[百炼音色列表](https://help.aliyun.com/zh/model-studio/qwen-audio-tts-voice-list)
 
 Qwen 合成会把待朗读的文字发送给百炼，可能按字符计费。书籍文件、音频和转换进度保存在本机。网络或额度问题导致任务失败时，可在结果页重试，已成功合成的片段从本机缓存复用。[模型与计费](https://help.aliyun.com/zh/model-studio/qwen-audio-3-1-tts-plus)
+
+### 使用 Qwen3-TTS 离线音色
+
+在 x86-64 Linux 或 Windows 的 WSL 中运行 Qwen3-TTS 1.7B CustomVoice，使用 CPU 和 Serena 音色。首次安装需联网，运行器和模型约 1.34 GB，下载文件和解压后的运行器保存在仓库的 `.local/qwen3-tts`。安装完成后，合成只访问本机回环端口。
+
+在仓库根目录运行。脚本需要 Ubuntu 等 Linux 环境中的 `bash`、`curl`、`python3`、`sha256sum` 和 `flock`。Windows PowerShell 可使用现有 WSL 发行版，Linux 上省略命令前的 `wsl.exe`。
+
+```powershell
+wsl.exe bash scripts/qwen-local.sh setup
+wsl.exe bash scripts/qwen-local.sh serve
+```
+
+保持模型服务的终端运行。在 `relaxbook.local.json`（或 `RELAXBOOK_CONFIG` 指定的文件）中设 `"qwen_local_port": 8777`，然后启动或重启 RelaxBook。网页中选择「Qwen3-TTS · Serena（离线）」，即可试听或生成整书。端口占用时可用 `serve 8877`，并将配置中的端口改为相同值。已有兼容的本机 speech.cpp 服务也可以直接配置其端口。
+
+安装脚本校验固定版本的运行器和模型。下载中断可重新运行 `setup` 续传。也可以从以下发布页下载 `speech-0.11.2-linux-x64-cpu.zip` 和 `Qwen3-TTS-12Hz-1.7B-CustomVoice-Q4_K.gguf`，放在 `.local/qwen3-tts` 后运行 `setup` 校验并解压。网页提供联机和离线选项。选定离线音色后，服务不可用时结果页会提示检查服务再重试。[运行器发布页](https://github.com/nyosegawa/speech.cpp/releases/tag/v0.11.2) · [量化模型](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF)
 
 ### 使用微软在线音色
 
@@ -58,7 +73,7 @@ Melo 的原生采样率为 44.1 kHz，VITS 普通话语音包为 16 kHz。转换
 python tests/smoke.py http://127.0.0.1:8765 path/to/evidence
 ```
 
-该检查生成三章 EPUB，调用当前安装的离线音色，核对真实 M4B 章节、分章 MP3、ZIP 和结果数据。人工试听、真机播放和新电脑复装按 [验收清单](docs/ACCEPTANCE.md) 执行。
+该检查生成三章 EPUB，调用当前安装的 sherpa-onnx 离线音色，核对真实 M4B 章节、分章 MP3、ZIP 和结果数据。Qwen 两种模式的核对步骤、真机播放和换机复装见 [验收清单](docs/ACCEPTANCE.md)。
 
 分支采用 Spec 中的独立实现基线，直接集成 [sherpa-onnx Kokoro](https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/kokoro.html)，以便复用语音片段并单独重试封装。abogen 和 ebook2audiobook 的完整 Web 界面实测对比仍待补充。首版的扫描件会提示 OCR，复杂版式和分章错误可通过网页检查并编辑正文。
 
@@ -69,8 +84,8 @@ Windows 首轮实测覆盖四种可读格式、扫描 PDF 提示、三种普通�
 接手开发的模型或开发者须自行检查新电脑的 SSH 环境和 USTC 仓库访问权限，选择该机已配置的 SSH 客户端、密钥或主机别名。本项目在当前 Windows 电脑上使用 WSL Git 和 WSL 内的 SSH 密钥。新电脑可使用本机已授权的身份，或生成专用密钥，将公钥添加到有仓库权限的 USTC 账号。私钥留在生成它的电脑上。
 
 ```sh
-git ls-remote git@git.ustc.edu.cn:luogd/relaxbook.git refs/heads/main
-git clone git@git.ustc.edu.cn:luogd/relaxbook.git
+git ls-remote git@git.ustc.edu.cn:luogd/relaxbook.git refs/heads/codex/relaxbook-v1
+git clone --branch codex/relaxbook-v1 git@git.ustc.edu.cn:luogd/relaxbook.git
 cd relaxbook
 ```
 

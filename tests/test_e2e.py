@@ -24,9 +24,11 @@ FFmpeg 外唯一的真实外部依赖是 Edge 在线语音服务。
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import logging
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -78,6 +80,23 @@ NETWORK_ERROR_MARKERS = (
 # ---------------------------------------------------------------------------
 # 基础工具
 # ---------------------------------------------------------------------------
+def _private_settings(settings: Settings) -> Settings:
+    """``settings`` fixture + 一个私有数据目录（避免并行 pytest 互删临时目录）。
+
+    ``tests/conftest.py`` 把 pytest 的 basetemp 固定成**共享**路径
+    （``<safe-temp>/pytest-tmp``），而 pytest 在每个会话第一次使用 ``tmp_path``
+    时会递归删除 basetemp。多个 agent 并行跑 pytest 时，别人的会话会在本测试
+    中途删掉 ``settings`` 的数据目录（实测：M4B 刚生成就被删除，ffprobe 报
+    No such file or directory）。因此在 conftest 保证「不在仓库内」的临时根目录
+    下再建一个本次进程独有的目录；工具路径/音色等仍来自 ``settings`` fixture。
+    """
+    private_dir = Path(tempfile.mkdtemp(prefix="relaxbook-e2e-"))
+    private = dataclasses.replace(settings, data_dir=str(private_dir))
+    private.ensure_dirs()
+    db.init_db(private.db_path)
+    return private
+
+
 def _is_network_error(message: str | None) -> bool:
     """判断一条错误消息是否属于网络/服务不可用（而不是业务或校验错误）。"""
     lowered = str(message or "").lower()
@@ -576,6 +595,7 @@ class _CountingEngine:
 # ---------------------------------------------------------------------------
 def test_segment_plan_matches_acceptance_expectations(settings: Settings, sample_epub: Path) -> None:
     """不联网校验：三章切片口径、缓存键唯一、不丢字、MP3 文件名符合预期。"""
+    settings = _private_settings(settings)
     book_id, revision_id = _seed_book(settings, sample_epub)
     items, total_chapters, model = _plan_segments_like_api(settings, revision_id)
 
@@ -635,6 +655,7 @@ def test_three_chapter_end_to_end_real_edge(
     settings: Settings, sample_epub: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """真实 Edge 合成一本三章样书，产出带内嵌目录的 M4B 与三个 MP3。"""
+    settings = _private_settings(settings)
     _require_network(settings)
 
     book_id, revision_id = _seed_book(settings, sample_epub)
@@ -654,6 +675,7 @@ def test_three_chapter_end_to_end_real_edge(
         f"引擎={ENGINE} 音色={VOICE} 并发={settings.concurrency}",
         flush=True,
     )
+    print(f"测试数据目录：{settings.data_dir}", flush=True)
 
     # -- 生成：首次 + 最多 2 轮「模拟 A5 恢复」（只补失败片段） --------------
     rounds: list[dict[str, Any]] = []

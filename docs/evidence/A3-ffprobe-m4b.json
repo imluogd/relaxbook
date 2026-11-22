@@ -1,0 +1,58 @@
+{
+  "chapters": [
+    {
+      "id": 0,
+      "time_base": "1/24000",
+      "start": 0,
+      "start_time": "0.000000",
+      "end": 661248,
+      "end_time": "27.552000",
+      "tags": {
+        "title": "序言"
+      }
+    },
+    {
+      "id": 1,
+      "time_base": "1/24000",
+      "start": 661248,
+      "start_time": "27.552000",
+      "end": 1566720,
+      "end_time": "65.280000",
+      "tags": {
+        "title": "出发"
+      }
+    },
+    {
+      "id": 2,
+      "time_base": "1/24000",
+      "start": 1566720,
+      "start_time": "65.280000",
+      "end": 2933568,
+      "end_time": "122.232000",
+      "tags": {
+        "title": "出发"
+      }
+    }
+  ],
+  "format": {
+    "filename": "D:\\dsh\\tmp\\rb-accept-evidence\\jobs\\1\\v01\\示例书 - 晓晓（女·温暖） - v01.m4b",
+    "nb_streams": 2,
+    "nb_programs": 0,
+    "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+    "format_long_name": "QuickTime / MOV",
+    "start_time": "0.000000",
+    "duration": "122.232000",
+    "size": "1025368",
+    "bit_rate": "67109",
+    "probe_score": 100,
+    "tags": {
+      "major_brand": "M4A ",
+      "minor_version": "512",
+      "compatible_brands": "M4A isomiso2",
+      "title": "示例书",
+      "artist": "示例作者",
+      "album": "示例书",
+      "encoder": "Lavf63.1.102"
+    }
+  }
+}

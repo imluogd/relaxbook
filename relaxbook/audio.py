@@ -13,6 +13,8 @@ from pathlib import Path
 from . import qwen, qwen_local
 
 LOG = logging.getLogger(__name__)
+HAN = r"\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U000323af"
+HAN_SPACE = re.compile(rf"(?<=[{HAN}]) (?=[{HAN}])")
 MODEL_NAME = "kokoro-int8-multi-lang-v1_1"
 # Model locations used by jobs created before the Qwen-only voice catalog.
 VOICE_PACKS = {
@@ -50,7 +52,18 @@ def chunks(text, limit=160):
             yield remaining
 
 
-def speech_chunks(text, voice):
+def clean_speech_text(text):
+    lines = []
+    for line in text.splitlines():
+        line = re.sub(r"[^\S\r\n]+", " ", line).strip()
+        line = HAN_SPACE.sub("", line)
+        lines.append(re.sub(r" *([，。！？；：、]) *", r"\1", line))
+    return "\n".join(lines)
+
+
+def speech_chunks(text, voice, *, clean=True):
+    if clean:
+        text = clean_speech_text(text)
     engine = voice.get("engine")
     if engine == "qwen_local":
         for paragraph in text.splitlines():

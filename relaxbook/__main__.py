@@ -1,12 +1,14 @@
 import argparse
 import hashlib
 import multiprocessing
+import os
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 import threading
+from contextlib import nullcontext
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -84,7 +86,7 @@ def doctor(config):
     return 1 if failures else 0
 
 
-def start(config):
+def start(config, with_local_qwen=False):
     store = Store(config)
     stop = threading.Event()
 
@@ -109,7 +111,8 @@ def start(config):
                 process.close()
             stop.wait(1)
 
-    with FileLock(str(store.root / "server.lock"), timeout=0):
+    service = qwen_local.running_service(config["qwen_local_port"]) if with_local_qwen else nullcontext()
+    with FileLock(str(store.root / "server.lock"), timeout=0), service:
         thread = threading.Thread(target=worker, name="relaxbook-worker", daemon=True)
         thread.start()
         try:
@@ -122,7 +125,12 @@ def start(config):
 def main():
     parser = argparse.ArgumentParser(prog="python -m relaxbook")
     parser.add_argument("command", choices=["setup", "setup-voices", "doctor", "start"])
-    command = parser.parse_args().command
+    parser.add_argument("--with-local-qwen", action="store_true",
+                        help="install and start local Qwen3-TTS with the web service")
+    args = parser.parse_args()
+    command = args.command
+    if args.with_local_qwen and command != "start":
+        parser.error("--with-local-qwen requires start")
     try:
         config = settings()
         if command == "setup":
@@ -132,11 +140,19 @@ def main():
         elif command == "doctor":
             return doctor(config)
         else:
-            start(config)
+            if args.with_local_qwen:
+                port = config.get("qwen_local_port") or qwen_local.DEFAULT_PORT
+                if port == config["port"]:
+                    raise ValueError("RelaxBook 网页与本机 Qwen3-TTS 需要不同的端口。")
+                config["qwen_local_port"] = port
+                os.environ["RELAXBOOK_QWEN_LOCAL_PORT"] = str(port)
+            start(config, args.with_local_qwen)
     except Timeout:
         print("此数据目录已经由另一个 RelaxBook 实例使用。", file=sys.stderr)
         return 1
-    except (OSError, ValueError) as error:
+    except KeyboardInterrupt:
+        return 130
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         print(error, file=sys.stderr)
         return 1
     return 0

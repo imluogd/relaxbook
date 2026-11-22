@@ -89,6 +89,8 @@ def export_job(store, config, narrator, job):
     directory.mkdir(exist_ok=True)
     all_segments, boundaries = [], []
     cursor = done = 0
+    # Older jobs keep their original chunk counts and cache keys.
+    clean_text = job.get("clean_text", False)
     active = [c for c in revision["chapters"] if not c["skip"]]
     rows = job["chapters"]
     try:
@@ -102,7 +104,7 @@ def export_job(store, config, narrator, job):
                 return
             parts = []
             try:
-                for text in speech_chunks(chapter["text"], job["voice"]):
+                for text in speech_chunks(chapter["text"], job["voice"], clean=clean_text):
                     parts.append(narrator.render(store.root / "cache", text, job["voice"], job["speed"]))
                     done += 1
                     if checkpoint(store, job_id, done=done):

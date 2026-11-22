@@ -24,7 +24,7 @@ python3.11 -m venv .venv
 .venv/bin/python -m relaxbook start
 ```
 
-浏览器打开 [本机书库](http://127.0.0.1:8765)。选择电子书并检查章节，试听音色后点击「生成有声书」。完成后下载 M4B 导入手机，也可以逐章下载 MP3 或打包下载。
+浏览器打开 [本机书库](http://127.0.0.1:8765)。选择电子书并检查章节，试听音色后点击「生成有声书」。试听和新任务合成前会去掉中文断字间的多余空格和重复空白，保留英文词间空格与段落换行。完成后下载 M4B 导入手机，也可以逐章下载 MP3 或打包下载。
 
 ### 使用百炼 Qwen 在线音色
 
@@ -36,18 +36,19 @@ Qwen 合成会把待朗读的文字发送给百炼，可能按字符计费。书
 
 ### 使用 Qwen3-TTS 离线音色
 
-在 x86-64 Linux 或 Windows 的 WSL 中运行 Qwen3-TTS 1.7B CustomVoice。Vivian、Serena 和 Uncle_Fu 共用一个模型，均可在 CPU 上运行。首次安装需联网，运行器和模型约 1.34 GB，安装在仓库的 `.local/qwen3-tts`。安装完成后，合成只访问本机回环端口。
+在 x86-64 Linux 或 Windows 的 WSL 中运行 Qwen3-TTS 1.7B CustomVoice，提供 Vivian 和 Serena。首次安装需联网，运行器和模型约 1.34 GB，安装在仓库的 `.local/qwen3-tts`。安装完成后，合成只访问本机回环端口。
 
-在仓库根目录运行。脚本需要 Ubuntu 等 Linux 环境中的 `bash`、`curl`、`python3`、`sha256sum` 和 `flock`。Windows PowerShell 可使用现有 WSL 发行版，Linux 上省略命令前的 `wsl.exe`。
+安装上面的 Python 依赖后，在仓库根目录运行下面一条命令，即可下载、校验模型并启动本地模型服务和 RelaxBook 网页。脚本需要 Ubuntu 等 Linux 环境中的 `bash`、`curl`、`python3`、`sha256sum` 和 `flock`。Windows 使用默认 WSL 发行版。
 
 ```powershell
-wsl.exe bash scripts/qwen-local.sh setup
-wsl.exe bash scripts/qwen-local.sh serve
+.venv\Scripts\python.exe -m relaxbook start --with-local-qwen
 ```
 
-保持模型服务的终端运行。在 `relaxbook.local.json`（或 `RELAXBOOK_CONFIG` 指定的文件）中设 `"qwen_local_port": 8777`，然后启动或重启 RelaxBook。网页可试听三种离线音色，也可在整书音色下拉框中选择任一音色生成。端口占用时可用 `serve 8877`，并将配置中的端口改为相同值。已有兼容的本机 speech.cpp 服务也可以直接配置其端口。
+在 Linux 上运行 `.venv/bin/python -m relaxbook start --with-local-qwen`。模型服务默认使用端口 8777，或使用本机配置中的 `qwen_local_port`。如果端口上已有兼容服务，启动时直接复用。退出 RelaxBook 时，本次启动的模型服务也会退出。
 
-安装脚本校验固定版本的运行器和模型。下载中断可重新运行 `setup` 续传。也可以从以下发布页下载 `speech-0.11.2-linux-x64-cpu.zip` 和 `Qwen3-TTS-12Hz-1.7B-CustomVoice-Q4_K.gguf`，放在 `.local/qwen3-tts` 后运行 `setup` 校验并解压。网页提供联机和离线选项。选定离线音色后，服务不可用时结果页会提示检查服务再重试。[运行器发布页](https://github.com/nyosegawa/speech.cpp/releases/tag/v0.11.2) · [量化模型](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF)
+只启动模型服务时，可运行 `wsl.exe bash scripts/qwen-local.sh start`，在 Linux 上省略 `wsl.exe`。这个入口也会下载和校验缺失文件。已有兼容服务时，也可将其端口填入本机配置，使用普通 `start` 启动网页。
+
+下载中断后重新运行启动命令即可续传。也可手动下载 `speech-0.11.2-linux-x64-cpu.zip` 和 `Qwen3-TTS-12Hz-1.7B-CustomVoice-Q4_K.gguf`，放进 `.local/qwen3-tts` 后启动，脚本会校验文件并解压运行器。[运行器发布页](https://github.com/nyosegawa/speech.cpp/releases/tag/v0.11.2) · [量化模型](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF)
 
 复制 `relaxbook.example.json` 为 `relaxbook.local.json` 可调整端口、工具路径、`data_dir` 和 `model_dir`。也可通过环境变量 `RELAXBOOK_CONFIG` 指向配置文件。默认的数据库及模型位于 Windows 的 `%LOCALAPPDATA%\RelaxBook` 或 macOS/Linux 的 `~/.local/share/RelaxBook`。浏览器关闭后，启动终端继续运行转换。退出并重启后，在结果页点击「继续」恢复中断任务。
 
@@ -61,7 +62,7 @@ wsl.exe bash scripts/qwen-local.sh serve
 python tests/smoke.py http://127.0.0.1:8765 path/to/evidence
 ```
 
-该检查验证三种离线音色试听，从三章 EPUB 生成并核对 M4B 章节、分章 MP3、ZIP 和结果数据。Qwen 两种模式的核对步骤、真机播放和换机复装见 [验收清单](docs/ACCEPTANCE.md)。
+该检查验证两种离线音色试听，从三章 EPUB 生成并核对 M4B 章节、分章 MP3、ZIP 和结果数据。Qwen 两种模式的核对步骤、真机播放和换机复装见 [验收清单](docs/ACCEPTANCE.md)。
 
 Windows 首轮实测覆盖四种可读格式、扫描 PDF 提示、三种普通话及一种英文样音、浏览器下载、M4B 与 MP3 文件核对、工作进程退出后续跑，以及封装失败后的重试。换机复装、Android/iOS 真机和真实长书听感按验收清单继续记录。
 

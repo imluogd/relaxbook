@@ -1,7 +1,13 @@
 import http.client
 import io
 import json
+import socket
+import subprocess
+import sys
+import time
 import wave
+from contextlib import contextmanager
+from pathlib import Path
 
 
 MODEL = "Qwen3-TTS-12Hz-1.7B-CustomVoice"
@@ -11,11 +17,11 @@ VOICES = [
     for key, name, speaker in [
         (310, "Serena", "serena"),
         (311, "Vivian", "vivian"),
-        (312, "Uncle_Fu", "uncle_fu"),
     ]
 ]
 INSTRUCTION = "用普通话以正常语速朗读。语气平实自然，长句连贯，按标点自然停顿。"
 SAMPLE_RATE = 24000
+DEFAULT_PORT = 8777
 
 
 def request(port, path, payload=None, timeout=5):
@@ -53,6 +59,46 @@ def model_details(port):
     except (ValueError, KeyError, TypeError):
         pass
     raise RuntimeError(f"本机端口 {port} 请加载 {MODEL} 模型，并使用兼容的 speech.cpp 版本。")
+
+
+@contextmanager
+def running_service(port):
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            already_listening = True
+    except (ConnectionRefusedError, TimeoutError):
+        already_listening = False
+    if already_listening:
+        model_details(port)
+        print(f"复用本机 Qwen3-TTS 服务（127.0.0.1:{port}）。", flush=True)
+        yield
+        return
+
+    root = Path(__file__).resolve().parents[1]
+    command = ["bash", "scripts/qwen-local.sh"]
+    if sys.platform == "win32":
+        command = ["wsl.exe", "--exec", *command]
+    subprocess.run([*command, "setup"], cwd=root, check=True)
+    process = subprocess.Popen([*command, "serve", str(port), "managed"],
+                               cwd=root, stdin=subprocess.PIPE)
+    try:
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and process.poll() is None:
+            try:
+                model_details(port)
+                break
+            except RuntimeError:
+                time.sleep(0.5)
+        else:
+            raise RuntimeError(f"本机 Qwen3-TTS 服务未能在端口 {port} 启动，请检查启动日志。")
+        yield
+    finally:
+        process.stdin.close()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
 
 
 def synthesize(port, text, speaker):

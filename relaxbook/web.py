@@ -210,7 +210,7 @@ def create_job(request: JobInput):
         filename = f"{safe_name(book['title'], '有声书')} - {label} - v{index:02}.m4b"
         job = {
             **request.model_dump(), "id": uid(), "title": book["title"], "voice": voice,
-            "filename": filename, "status": "queued", "total": total, "done": 0,
+            "filename": filename, "status": "queued", "total": total, "done": 0, "clean_text": True,
             "chapters": [{"id": c["id"], "index": i, "title": c["title"] or "未命名章节",
                           "filename": chapter_name(i, len(active), c["title"]), "status": "pending"}
                          for i, c in enumerate(active, 1)],

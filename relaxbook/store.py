@@ -9,6 +9,8 @@ from pathlib import Path
 def settings():
     path = Path(os.environ.get("RELAXBOOK_CONFIG", "relaxbook.local.json"))
     supplied = json.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else {}
+    if (port_override := os.environ.get("RELAXBOOK_QWEN_LOCAL_PORT")) is not None:
+        supplied["qwen_local_port"] = int(port_override)
     qwen_port = supplied.get("qwen_local_port")
     if qwen_port is not None and (type(qwen_port) is not int or not 1 <= qwen_port <= 65535):
         raise ValueError("qwen_local_port 必须是 1–65535 之间的端口号或 null。")

@@ -60,20 +60,27 @@ def main():
     available = api("voices")
     assert all(voice["engine"] in {"qwen", "qwen_local"} for voice in available)
     voices = [voice for voice in available if voice["engine"] == "qwen_local"]
-    assert {voice["speaker"] for voice in voices} == {"serena", "vivian", "uncle_fu"}
-    chosen = next(voice for voice in voices if voice["speaker"] == "uncle_fu")
+    assert {voice["speaker"] for voice in voices} == {"serena", "vivian"}
+    chosen = next(voice for voice in voices if voice["speaker"] == "vivian")
     for voice in voices:
-        sample = "清晨的列车驶出站台。"
+        sample = "清 晨的列 车驶出站 台 。"
         preview = api("previews", "POST", {"text": sample, "voice": voice["id"], "speed": 1})["id"]
         result = wait(f"previews/{preview}", {"complete"})
         assert result["voice"] == voice
-        assert request(result["url"])[:4] == b"RIFF"
+        clip = request(result["url"])
+        assert clip[:4] == b"RIFF"
+        if voice == chosen:
+            cleaned = api("previews", "POST", {
+                "text": "清晨的列车驶出站台。", "voice": voice["id"], "speed": 1,
+            })["id"]
+            assert request(wait(f"previews/{cleaned}", {"complete"})["url"]) == clip
     config = {"book_id": book_id, "revision": book["revision"], "voice": chosen["id"],
               "speed": 1, "request_id": "smoke-" + str(time.time_ns())}
     job_id = api("jobs", "POST", config)["job_id"]
     assert api("jobs", "POST", config)["job_id"] == job_id
     result = wait(f"jobs/{job_id}", {"complete"}, seconds=600)
     assert result["voice"] == chosen
+    assert result["done"] == result["total"]
     assert result["completed_chapters"] == result["planned_chapters"] == 3
     names = ["001 - 序言.mp3", "002 - 出发.mp3", "003 - 出发.mp3"]
     for i, (row, name) in enumerate(zip(result["chapters"], names)):

@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Local runtime data (books, audio, models, db) never go into git
+data/
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# Test / tooling leftovers (TMP may point at the checkout in sandboxes)
+pytest-of-*/
+pytest-*/
+relaxbook-api-test-home-*/
+relaxbook-test-tmp/
+relaxbook-data/
+pip-build-tracker-*/
+pip-install-*/
+pip-unpack-*/
+pip-ephem-wheel-cache-*/
+.recovery/
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.tmp

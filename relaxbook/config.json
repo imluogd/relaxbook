@@ -1,0 +1,17 @@
+{
+  "data_dir": "D:\\dsh\\relaxbook\\relaxbook",
+  "host": "127.0.0.1",
+  "port": 8765,
+  "engine": "edge",
+  "model": "edge-neural",
+  "voice": "zh-CN-XiaoxiaoNeural",
+  "rate": "+0%",
+  "concurrency": 4,
+  "ffmpeg": "D:\\dsh\\relaxbook\\.venv\\Lib\\site-packages\\imageio_ffmpeg\\binaries\\ffmpeg-win-x86_64-v9.0.2.exe",
+  "ffprobe": "E:\\ffmpeg\\bin\\ffprobe.EXE",
+  "calibre_convert": "F:\\calibre\\ebook-convert.exe",
+  "mp3_bitrate": "64k",
+  "m4b_bitrate": "64k",
+  "zip_packaging": false,
+  "open_browser": true
+}

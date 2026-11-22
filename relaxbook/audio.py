@@ -1,551 +1,395 @@
-"""Thin FFmpeg / ffprobe wrappers (CONTRACTS section 8).
-
-Every helper takes the absolute tool paths explicitly; nothing here depends on
-the process ``PATH``.  Failures raise :class:`AudioError` carrying the tail of
-the tool's stderr so the UI can show a Chinese explanation plus the real cause.
-
-Sample format is always 24 000 Hz, mono, signed 16-bit PCM.  WAVs are joined
-frame by frame with the standard library ``wave`` module instead of
-``ffmpeg -f concat``: no resampling, no encoder delay and therefore a sample
-count that is exactly the sum of the parts (chapter time stamps depend on it).
-"""
-
-from __future__ import annotations
-
+import asyncio
+import hashlib
 import json
 import logging
-import os
-import struct
+import re
 import subprocess
-import uuid
 import wave
+from functools import cached_property
+from importlib.metadata import PackageNotFoundError, version
+from importlib.util import find_spec
 from pathlib import Path
-from typing import Any, Sequence
 
-FRAME_RATE = 24000
-CHANNELS = 1
-SAMPLE_WIDTH = 2  # bytes per sample -> signed 16-bit PCM
-_READ_CHUNK = 65536  # frames per read when copying standard WAVs
+from . import qwen, qwen_local
 
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
+HAN = r"\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U000323af"
+HAN_SPACE = re.compile(rf"(?<=[{HAN}]) (?=[{HAN}])")
+MODEL_NAME = "kokoro-int8-multi-lang-v1_1"
+# Model locations used by jobs created before the Qwen-only voice catalog.
+VOICE_PACKS = {
+    "melo": {
+        "directory": "vits-melo-tts-zh_en",
+        "sha256": "e58351ed7149f290a54534538badd4077cdbe6fddc964b24d0bee870415d1514",
+    },
+    "vits": {
+        "directory": "sherpa-onnx-vits-zh-ll",
+        "sha256": "f7393d1bbc59709d5f52ea76cd5bceeec62f6a29f9c1f79ff64b4c15ec841f3a",
+    },
+}
 
 
-class AudioError(Exception):
-    """User-visible audio failure (Chinese message, ffmpeg stderr tail included)."""
+def pack_directory(config, pack):
+    return Path(config["model_dir"]).parent / pack["directory"]
 
 
-def ensure_chapter_capable(ffmpeg: str) -> None:
-    """Refuse to write an M4B chapter track with an FFmpeg that cannot tag it.
+def voice_options(config):
+    options = qwen.VOICES.copy() if qwen.api_key() else []
+    if config.get("qwen_local_port") is not None:
+        options.extend(qwen_local.VOICES)
+    return options
 
-    FFmpeg < 7 writes the chapter timings but silently drops the chapter title
-    text track, which leaves a file whose chapters show up as untitled (and
-    triggers "Referenced QT chapter track not found" in ffprobe).  Failing loud
-    here is much better than publishing an audiobook without a usable TOC.
-    """
-    from . import config as _config
 
-    exe = str(ffmpeg or "")
-    if exe:
+def chunks(text, limit=160):
+    for paragraph in text.splitlines():
+        remaining = paragraph.strip()
+        while len(remaining) > limit:
+            boundaries = list(re.finditer(r"[。！？；，、,.!?;:\s]", remaining[:limit]))
+            end = boundaries[-1].end() if boundaries and boundaries[-1].end() >= limit // 2 else limit
+            yield remaining[:end].strip()
+            remaining = remaining[end:].lstrip()
+        if remaining:
+            yield remaining
+
+
+def clean_speech_text(text):
+    lines = []
+    for line in text.splitlines():
+        line = re.sub(r"[^\S\r\n]+", " ", line).strip()
+        line = HAN_SPACE.sub("", line)
+        lines.append(re.sub(r" *([，。！？；：、]) *", r"\1", line))
+    return "\n".join(lines)
+
+
+def speech_chunks(text, voice, *, clean=True):
+    if clean:
+        text = clean_speech_text(text)
+    engine = voice.get("engine")
+    if engine == "qwen_local":
+        for paragraph in text.splitlines():
+            sentences = re.findall(r"[^。！？!?]*[。！？!?]+[”’」』）)]*|[^。！？!?]+$", paragraph)
+            for start in range(0, len(sentences), 3):
+                yield from chunks("".join(sentences[start:start + 3]), limit=120)
+        return
+    if engine not in {"edge", "qwen"}:
+        yield from chunks(text)
+        return
+    # Keep paragraph breaks and punctuation in the same request where possible.
+    remaining = text.strip()
+    limit = 650
+    while len(remaining) > limit:
+        window = remaining[limit // 2:limit]
+        for stops in (r"[。！？.!?\n]", r"[；;]", r"[，、,\s]"):
+            boundaries = list(re.finditer(stops, window))
+            if boundaries:
+                break
+        end = limit // 2 + boundaries[-1].end() if boundaries else limit
+        yield remaining[:end].strip()
+        remaining = remaining[end:].lstrip()
+    if remaining:
+        yield remaining
+
+
+def safe_name(text, fallback):
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', "_", text).strip(" .")
+    return name[:60].rstrip(" .") or fallback
+
+
+def chapter_name(index, count, title):
+    return f"{index:0{max(3, len(str(count)))}d} - {safe_name(title, '未命名章节')}.mp3"
+
+
+def run(args, timeout=None):
+    result = subprocess.run([str(arg) for arg in args], capture_output=True,
+                            encoding="utf-8", errors="replace", timeout=timeout)
+    if result.returncode:
+        raise RuntimeError(f"{Path(args[0]).name} 执行失败：{result.stderr.strip()[-500:]}")
+    return result.stdout
+
+
+def wave_info(path):
+    with wave.open(str(path), "rb") as stream:
+        return stream.getparams()
+
+
+class Narrator:
+    def __init__(self, directory, threads):
+        self.directory = Path(directory)
+        self.threads = threads
+
+    @cached_property
+    def model(self):
+        return next((p for p in [self.directory / "model.int8.onnx", self.directory / "model.onnx"]
+                     if p.is_file()), self.directory / "model.int8.onnx")
+
+    @cached_property
+    def fingerprint(self):
+        if not self.model.is_file():
+            raise ValueError("本机缺少所选音色的模型，请运行 setup 或 setup-voices。")
         try:
-            major = _config.ffmpeg_major(exe)
-        except (OSError, subprocess.SubprocessError):  # pragma: no cover - defensive
-            major = 0
-        if major >= _config.MIN_FFMPEG_MAJOR:
-            return
-        version = _config.tool_version_line(exe) or exe
-    else:
-        version = "（未配置）"
-    raise AudioError(
-        f"FFmpeg 版本过低，无法写入带标题的 M4B 章节轨（当前：{version}）。"
-        f"请升级到 FFmpeg {_config.MIN_FFMPEG_MAJOR} 及以上，"
-        "或安装 imageio-ffmpeg（项目会自动使用其内置的新版 FFmpeg）。"
-    )
+            runtime = version("sherpa-onnx")
+        except PackageNotFoundError:
+            raise ValueError("继续这个历史任务需安装原来的 sherpa-onnx 依赖。") from None
+        digest = hashlib.sha256(f"{self.cache_version}:sherpa-onnx-{runtime}".encode())
+        for path in sorted(self.directory.rglob("*")):
+            if path.is_file() and path.name not in {"README.md", "LICENSE"}:
+                digest.update(path.relative_to(self.directory).as_posix().encode())
+                with path.open("rb") as stream:
+                    for block in iter(lambda: stream.read(1024**2), b""):
+                        digest.update(block)
+        return digest.hexdigest()
 
+    cache_version = "segments-v1"
 
-# --------------------------------------------------------------------------- #
-# process helpers
-# --------------------------------------------------------------------------- #
-def _tool(path: str | None, name: str) -> str:
-    if not path:
-        raise AudioError(f"未配置 {name} 可执行文件，请在 config.json 中设置路径。")
-    return str(path)
+    @cached_property
+    def engine(self):
+        import sherpa_onnx
 
-
-def _tail(text: str, limit: int = 1200) -> str:
-    text = (text or "").strip()
-    if len(text) > limit:
-        return "…" + text[-limit:]
-    return text
-
-
-def _run(cmd: Sequence[str], *, what: str, timeout: float | None = 600) -> subprocess.CompletedProcess:
-    """Run *cmd*; raise :class:`AudioError` on launch failure or non-zero exit."""
-    try:
-        proc = subprocess.run(
-            [str(part) for part in cmd],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=timeout,
-            check=False,
+        d = self.directory
+        config = sherpa_onnx.OfflineTtsConfig(
+            model=sherpa_onnx.OfflineTtsModelConfig(
+                kokoro=sherpa_onnx.OfflineTtsKokoroModelConfig(
+                    model=str(self.model), voices=str(d / "voices.bin"),
+                    tokens=str(d / "tokens.txt"), data_dir=str(d / "espeak-ng-data"),
+                    lexicon=",".join(str(d / name) for name in ["lexicon-us-en.txt", "lexicon-zh.txt"]),
+                ),
+                num_threads=self.threads, provider="cpu",
+            ),
+            rule_fsts=",".join(str(d / name) for name in ["phone-zh.fst", "date-zh.fst", "number-zh.fst"]),
+            max_num_sentences=1,
         )
-    except FileNotFoundError:
-        raise AudioError(f"找不到可执行文件：{cmd[0]}") from None
-    except subprocess.TimeoutExpired:
-        raise AudioError(f"{what} 超时（{timeout} 秒）。") from None
-    except OSError as exc:
-        raise AudioError(f"{what} 无法执行：{exc}") from exc
-    if proc.returncode != 0:
-        stderr = proc.stderr.decode("utf-8", "replace")
-        code = proc.returncode
-        if code >= 2**31:  # Windows reports negative exit codes as unsigned
-            code -= 2**32
-        raise AudioError(f"{what} 失败（退出码 {code}）：{_tail(stderr)}")
-    return proc
+        if not config.validate():
+            raise ValueError("Kokoro 模型文件不完整，请核对配置并重新安装模型。")
+        return sherpa_onnx.OfflineTts(config)
 
-
-def _seconds_to_ms(value: Any) -> int:
-    """Convert an ffprobe seconds field to a non-negative integer millisecond."""
-    if value is None or value == "":
-        return 0
-    try:
-        return max(0, int(round(float(value) * 1000)))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _int_or_zero(value: Any) -> int:
-    if value is None or value == "":
-        return 0
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return 0
-
-
-# --------------------------------------------------------------------------- #
-# probing
-# --------------------------------------------------------------------------- #
-def probe(path: Path, *, ffprobe: str) -> dict:
-    """``ffprobe -show_format -show_streams`` as a flat dict.
-
-    Returns ``{"duration_ms", "sample_rate", "channels", "bit_rate", "format_name"}``.
-    """
-    path = Path(path)
-    proc = _run(
-        [
-            _tool(ffprobe, "ffprobe"),
-            "-v",
-            "error",
-            "-show_format",
-            "-show_streams",
-            "-of",
-            "json",
-            "-i",
-            str(path),
-        ],
-        what=f"探测音频 {path.name}",
-    )
-    try:
-        data = json.loads(proc.stdout.decode("utf-8", "replace") or "{}")
-    except ValueError as exc:
-        raise AudioError(f"无法解析 ffprobe 输出（{path.name}）：{exc}") from exc
-
-    fmt: dict = data.get("format") or {}
-    audio_streams = [s for s in (data.get("streams") or []) if s.get("codec_type") == "audio"]
-    stream: dict = audio_streams[0] if audio_streams else {}
-    duration = fmt.get("duration", stream.get("duration"))
-    bit_rate = _int_or_zero(fmt.get("bit_rate") or stream.get("bit_rate"))
-    return {
-        "duration_ms": _seconds_to_ms(duration),
-        "sample_rate": _int_or_zero(stream.get("sample_rate")),
-        "channels": _int_or_zero(stream.get("channels")),
-        "bit_rate": bit_rate,
-        "format_name": str(fmt.get("format_name") or ""),
-    }
-
-
-def probe_chapters(path: Path, *, ffprobe: str) -> list[dict]:
-    """``ffprobe -show_chapters``; ``[]`` when the file has no chapters."""
-    path = Path(path)
-    proc = _run(
-        [
-            _tool(ffprobe, "ffprobe"),
-            "-v",
-            "error",
-            "-show_chapters",
-            "-of",
-            "json",
-            "-i",
-            str(path),
-        ],
-        what=f"探测章节 {path.name}",
-    )
-    try:
-        data = json.loads(proc.stdout.decode("utf-8", "replace") or "{}")
-    except ValueError as exc:
-        raise AudioError(f"无法解析 ffprobe 章节输出（{path.name}）：{exc}") from exc
-
-    chapters: list[dict] = []
-    for position, raw in enumerate(data.get("chapters") or []):
-        tags = raw.get("tags") or {}
+    def render(self, directory, text, voice, speed):
+        key = hashlib.sha256(json.dumps(
+            [self.fingerprint, voice["id"], voice["language"], speed, text],
+            ensure_ascii=False,
+        ).encode()).hexdigest()
+        path = directory / f"{key}.wav"
         try:
-            chapter_id = int(raw.get("id"))
-        except (TypeError, ValueError):
-            chapter_id = position + 1
-        chapters.append(
-            {
-                "id": chapter_id,
-                "title": str(tags.get("title") or ""),
-                "start_ms": _seconds_to_ms(raw.get("start_time")),
-                "end_ms": _seconds_to_ms(raw.get("end_time")),
-            }
-        )
-    return chapters
+            with wave.open(str(path), "rb") as stream:
+                if (stream.getnchannels() == 1 and stream.getsampwidth() == 2
+                    and stream.getframerate() > 0 and stream.getnframes() > 0
+                    and path.stat().st_size >= stream.getnframes() * 2 + 44):
+                    LOG.info("Reused segment %s", key)
+                    return path
+        except (OSError, EOFError, wave.Error):
+            pass
+        tmp = path.with_suffix(".partial.wav")
+        self.synthesize(text, voice, speed, tmp)
+        info = wave_info(tmp)
+        if info.nframes <= 0 or (info.nchannels, info.sampwidth) != (1, 2):
+            raise RuntimeError("语音引擎返回空片段或不支持的采样格式。")
+        tmp.replace(path)
+        LOG.info("Synthesized segment %s", key)
+        return path
 
+    def synthesize(self, text, voice, speed, output):
+        import sherpa_onnx
 
-def verify_decodable(path: Path, *, ffmpeg: str) -> None:
-    """Fully decode the first audio stream; raise :class:`AudioError` if broken."""
-    path = Path(path)
-    _run(
-        [
-            _tool(ffmpeg, "ffmpeg"),
-            "-nostdin",
-            "-hide_banner",
-            "-v",
-            "error",
-            "-xerror",
-            "-i",
-            str(path),
-            "-map",
-            "0:a:0",
-            "-f",
-            "null",
-            "-",
-        ],
-        what=f"解码校验 {path.name}",
-    )
+        audio = self.engine.generate(text, sid=voice.get("speaker", voice["id"]), speed=speed)
+        if not sherpa_onnx.write_wave(str(output), self.prepare_samples(audio.samples), audio.sample_rate):
+            raise RuntimeError("无法写入语音片段。")
 
-
-# --------------------------------------------------------------------------- #
-# WAV helpers
-# --------------------------------------------------------------------------- #
-def decode_to_wav(src: Path, dst: Path, *, ffmpeg: str) -> None:
-    """Decode any audio file to 24 000 Hz mono signed 16-bit PCM WAV."""
-    src, dst = Path(src), Path(dst)
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    _run(
-        [
-            _tool(ffmpeg, "ffmpeg"),
-            "-nostdin",
-            "-hide_banner",
-            "-v",
-            "error",
-            "-y",
-            "-i",
-            str(src),
-            "-vn",
-            "-ac",
-            str(CHANNELS),
-            "-ar",
-            str(FRAME_RATE),
-            "-c:a",
-            "pcm_s16le",
-            "-f",
-            "wav",
-            str(dst),
-        ],
-        what=f"解码为 WAV {src.name}",
-    )
-
-
-def wav_frames(path: Path) -> int:
-    """Number of PCM frames in *path* (read from the WAV header)."""
-    try:
-        with wave.open(str(Path(path)), "rb") as wav:
-            return int(wav.getnframes())
-    except (wave.Error, EOFError, OSError) as exc:
-        raise AudioError(f"无法读取 WAV 头信息 {Path(path).name}：{exc}") from exc
-
-
-def wav_duration_ms(path: Path) -> int:
-    """Duration in whole milliseconds derived from the WAV frame count."""
-    try:
-        with wave.open(str(Path(path)), "rb") as wav:
-            frames = int(wav.getnframes())
-            rate = int(wav.getframerate())
-    except (wave.Error, EOFError, OSError) as exc:
-        raise AudioError(f"无法读取 WAV 头信息 {Path(path).name}：{exc}") from exc
-    if rate <= 0:
-        raise AudioError(f"WAV 采样率无效：{Path(path).name}")
-    return frames * 1000 // rate
-
-
-def _decode_to_mono_int16(raw: bytes, width: int, channels: int) -> list[int]:
-    """Decode raw PCM frames of arbitrary width/channel count into int16 mono."""
-    if width == SAMPLE_WIDTH:
-        count = len(raw) // 2
-        samples = list(struct.unpack(f"<{count}h", raw[: count * 2]))
-    elif width == 1:  # unsigned 8-bit -> signed 16-bit
-        samples = [(value - 128) * 256 for value in raw]
-    elif width == 3:  # packed signed 24-bit
-        count = len(raw) // 3
-        samples = []
-        for pos in range(count):
-            low, mid, high = raw[pos * 3 : pos * 3 + 3]
-            value = low | (mid << 8) | (high << 16)
-            if value & 0x800000:
-                value -= 0x1000000
-            samples.append(value >> 8)
-    elif width == 4:  # signed 32-bit
-        count = len(raw) // 4
-        samples = [value >> 16 for value in struct.unpack(f"<{count}i", raw[: count * 4])]
-    else:
-        raise AudioError(f"不支持的 WAV 采样位宽：{width * 8} bit")
-
-    if channels <= 1:
+    def prepare_samples(self, samples):
         return samples
-    frames = len(samples) // channels
-    mixed: list[int] = []
-    for pos in range(frames):
-        window = samples[pos * channels : (pos + 1) * channels]
-        mixed.append(int(round(sum(window) / channels)))
-    return mixed
 
 
-def _resample_linear(samples: list[int], src_rate: int, dst_rate: int) -> list[int]:
-    """Linear-interpolation resampling; only used for non-standard inputs."""
-    if not samples or src_rate == dst_rate:
-        return list(samples)
-    if src_rate <= 0 or dst_rate <= 0:
-        raise AudioError("WAV 采样率无效，无法重采样。")
-    out_count = int(round(len(samples) * dst_rate / src_rate))
-    if out_count <= 0:
-        return []
-    step = src_rate / dst_rate
-    last = len(samples) - 1
-    result: list[int] = []
-    for pos in range(out_count):
-        src_pos = pos * step
-        base = int(src_pos)
-        if base >= last:
-            result.append(samples[last])
-            continue
-        fraction = src_pos - base
-        value = samples[base] + (samples[base + 1] - samples[base]) * fraction
-        result.append(int(round(value)))
-    return result
+class VitsNarrator(Narrator):
+    cache_version = "vits-fp32-level-v1"
+
+    @cached_property
+    def model(self):
+        return self.directory / "model.onnx"
+
+    @cached_property
+    def engine(self):
+        import sherpa_onnx
+
+        d = self.directory
+        config = sherpa_onnx.OfflineTtsConfig(
+            model=sherpa_onnx.OfflineTtsModelConfig(
+                vits=sherpa_onnx.OfflineTtsVitsModelConfig(
+                    model=str(self.model), tokens=str(d / "tokens.txt"), lexicon=str(d / "lexicon.txt"),
+                ),
+                num_threads=self.threads, provider="cpu",
+            ),
+            rule_fsts=",".join(str(d / name) for name in ("phone.fst", "date.fst", "number.fst")
+                               if (d / name).is_file()),
+            max_num_sentences=1,
+        )
+        if not config.validate():
+            raise ValueError("离线语音包不完整，请重新安装模型。")
+        return sherpa_onnx.OfflineTts(config)
+
+    def prepare_samples(self, samples):
+        peak = max(map(abs, samples), default=0)
+        if peak < 1e-5:
+            raise ValueError("语音引擎返回了静音。请检查原文或试听其他音色。")
+        rms = (sum(value * value for value in samples) / len(samples)) ** 0.5
+        # Use one gain per segment, without a compressor or a change in timing.
+        gain = min(10 ** (8 / 20), 10 ** (-2 / 20) / peak, 10 ** (-20 / 20) / rms)
+        return [sample * gain for sample in samples]
 
 
-def _copy_wav_into(source: Path, destination: wave.Wave_write) -> int:
-    """Append one WAV's samples to *destination*; returns the frame count written."""
-    try:
-        with wave.open(str(source), "rb") as wav:
-            channels = int(wav.getnchannels())
-            width = int(wav.getsampwidth())
-            rate = int(wav.getframerate())
-            frames = int(wav.getnframes())
-            standard = channels == CHANNELS and width == SAMPLE_WIDTH and rate == FRAME_RATE
-            written = 0
-            if standard:
-                while True:
-                    data = wav.readframes(_READ_CHUNK)
-                    if not data:
-                        break
-                    destination.writeframes(data)
-                    written += len(data) // (SAMPLE_WIDTH * CHANNELS)
-                return written
-            raw = wav.readframes(frames)
-    except (wave.Error, EOFError, OSError) as exc:
-        raise AudioError(f"无法读取 WAV 片段 {Path(source).name}：{exc}") from exc
+class EdgeNarrator(Narrator):
+    def __init__(self, config):
+        self.enabled = config.get("microsoft_online", False)
+        self.ffmpeg = config["ffmpeg"]
 
-    samples = _decode_to_mono_int16(raw, width, channels)
-    samples = _resample_linear(samples, rate, FRAME_RATE)
-    if samples:
-        destination.writeframes(struct.pack(f"<{len(samples)}h", *samples))
-    return len(samples)
+    @cached_property
+    def fingerprint(self):
+        if not self.enabled:
+            raise ValueError("微软在线语音已禁用，请在本机配置中启用后继续。")
+        if not find_spec("edge_tts"):
+            raise ValueError("请先安装 requirements-edge.txt 中的微软在线语音依赖。")
+        return f"edge-read-aloud-v1:{version('edge-tts')}"
 
+    def synthesize(self, text, voice, speed, output):
+        import edge_tts
 
-def concat_wavs(wavs: Sequence[Path], out: Path) -> None:
-    """Join WAVs sample by sample into one 24 000 Hz / mono / 16-bit WAV.
+        rate = f"{round((speed - 1) * 100):+d}%"
+        source = output.with_suffix(".mp3")
 
-    The output is written to a sibling temporary file and ``os.replace``\\ d into
-    place, so a crash never leaves a half-written WAV under a valid name.
-    """
-    sources = [Path(item) for item in wavs]
-    if not sources:
-        raise AudioError("没有可拼接的 WAV 文件。")
-    out = Path(out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    temp = out.with_name(f".{out.name}.{uuid.uuid4().hex[:8]}.part.wav")
-    try:
-        total = 0
-        with wave.open(str(temp), "wb") as destination:
-            destination.setnchannels(CHANNELS)
-            destination.setsampwidth(SAMPLE_WIDTH)
-            destination.setframerate(FRAME_RATE)
-            for source in sources:
-                total += _copy_wav_into(source, destination)
-        if total <= 0:
-            raise AudioError("拼接后的 WAV 不含任何音频样本。")
-        os.replace(temp, out)
-    finally:
-        temp.unlink(missing_ok=True)
+        async def save():
+            stream = edge_tts.Communicate(text, voice["speaker"], rate=rate,
+                                          connect_timeout=10, receive_timeout=30)
+            await asyncio.wait_for(stream.save(str(source)), timeout=65)
 
-
-# --------------------------------------------------------------------------- #
-# encoding
-# --------------------------------------------------------------------------- #
-def encode_mp3(wav: Path, out: Path, *, bitrate: str, ffmpeg: str) -> None:
-    """Encode a 24 kHz mono WAV to MP3 with libmp3lame (writes *out* directly)."""
-    out = Path(out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    _run(
-        [
-            _tool(ffmpeg, "ffmpeg"),
-            "-nostdin",
-            "-hide_banner",
-            "-v",
-            "error",
-            "-y",
-            "-i",
-            str(Path(wav)),
-            "-vn",
-            "-ar",
-            str(FRAME_RATE),
-            "-ac",
-            str(CHANNELS),
-            "-c:a",
-            "libmp3lame",
-            "-b:a",
-            str(bitrate),
-            "-f",
-            "mp3",
-            str(out),
-        ],
-        what=f"编码 MP3 {out.name}",
-    )
-
-
-def _ffmetadata_value(value: Any) -> str:
-    """Flatten a metadata value: FFMETADATA1 has no line continuation."""
-    return str(value or "").replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
-
-
-def write_ffmetadata(
-    path: Path,
-    *,
-    title: str,
-    author: str | None,
-    chapters: Sequence[dict],
-) -> None:
-    """Write an ``;FFMETADATA1`` sidecar with global tags and chapter ranges."""
-    lines: list[str] = [";FFMETADATA1"]
-    book_title = _ffmetadata_value(title)
-    if book_title:
-        lines.append(f"title={book_title}")
-        lines.append(f"album={book_title}")
-    author_name = _ffmetadata_value(author)
-    if author_name:
-        lines.append(f"artist={author_name}")
-    for chapter in chapters:
-        lines.append("")
-        lines.append("[CHAPTER]")
-        lines.append("TIMEBASE=1/1000")
-        lines.append(f"START={max(0, int(chapter.get('start_ms') or 0))}")
-        lines.append(f"END={max(0, int(chapter.get('end_ms') or 0))}")
-        chapter_title = _ffmetadata_value(chapter.get("title"))
-        if chapter_title:
-            lines.append(f"title={chapter_title}")
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def encode_m4b(
-    wav: Path,
-    out: Path,
-    *,
-    title: str,
-    author: str | None,
-    chapters: Sequence[dict],
-    bitrate: str,
-    ffmpeg: str,
-    cover: Path | str | None = None,
-    warnings: list[str] | None = None,
-) -> None:
-    """Encode to M4B with an embedded chapter track and UTF-8 tags.
-
-    ``chapters`` is ``[{"title", "start_ms", "end_ms"}]``.  When a *cover* is
-    given it is attached as a ``attached_pic`` stream; if that fails the audio
-    is re-encoded without the cover (a warning is logged, never a hard error).
-    """
-    wav, out = Path(wav), Path(out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    ensure_chapter_capable(ffmpeg)
-    meta_path = out.with_name(f".{out.name}.{uuid.uuid4().hex[:8]}.ffmetadata.txt")
-    write_ffmetadata(meta_path, title=title, author=author, chapters=chapters)
-    try:
-        tool = _tool(ffmpeg, "ffmpeg")
-        cover_value = str(cover) if cover is not None else ""
-        use_cover = bool(cover_value) and Path(cover_value).is_file()
-
-        prefix = [tool, "-nostdin", "-hide_banner", "-v", "error", "-y"]
-        # Inputs (and their input options) come first: ffmpeg treats options
-        # before an ``-i`` as applying to that input file.
-        audio_and_meta_inputs = ["-i", str(wav), "-i", str(meta_path)]
-        common_options = [
-            "-map_metadata",
-            "1",
-            "-map_chapters",
-            "1",
-            "-metadata",
-            f"title={_ffmetadata_value(title)}",
-        ]
-        if _ffmetadata_value(author):
-            common_options += ["-metadata", f"artist={_ffmetadata_value(author)}"]
-        common_options += [
-            "-map",
-            "0:a",
-            "-c:a",
-            "aac",
-            "-b:a",
-            str(bitrate),
-        ]
-        plain_command = prefix + audio_and_meta_inputs + common_options + ["-f", "ipod", str(out)]
-
-        if use_cover:
-            with_cover = (
-                prefix
-                + audio_and_meta_inputs
-                + ["-i", cover_value]
-                + common_options
-                + [
-                    "-map",
-                    "2:v:0",
-                    "-c:v",
-                    "copy",
-                    "-disposition:v:0",
-                    "attached_pic",
-                    "-f",
-                    "ipod",
-                    str(out),
-                ]
-            )
+        try:
             try:
-                _run(with_cover, what=f"编码 M4B {out.name}（含封面）")
-                return
-            except AudioError as exc:
-                message = f"封面写入失败，已改为无封面导出：{exc}"
-                logger.warning("%s", message)
-                if warnings is not None:
-                    warnings.append(message)
-                out.unlink(missing_ok=True)
-        elif cover_value:
-            message = f"封面文件不存在，已略过：{cover_value}"
-            logger.warning("%s", message)
-            if warnings is not None:
-                warnings.append(message)
+                asyncio.run(save())
+            except Exception as error:
+                raise RuntimeError(
+                    "微软在线语音暂时无法生成音频。请检查网络后重试，或另选本地音色。"
+                    f"（{type(error).__name__}）"
+                ) from error
+            decode_online_audio(self.ffmpeg, source, output, 24000)
+        finally:
+            source.unlink(missing_ok=True)
 
-        _run(plain_command, what=f"编码 M4B {out.name}")
-    finally:
-        meta_path.unlink(missing_ok=True)
+
+class QwenNarrator(Narrator):
+    def __init__(self, config):
+        self.ffmpeg = config["ffmpeg"]
+
+    @cached_property
+    def fingerprint(self):
+        instruction = hashlib.sha256(qwen.INSTRUCTION.encode()).hexdigest()
+        # Keep the original fingerprint so interrupted 龙安灵心 jobs can resume.
+        return f"qwen-websocket-v1:{qwen.MODEL}:{qwen.VOICES[0]['speaker']}:{instruction}"
+
+    def synthesize(self, text, voice, speed, output):
+        key = qwen.api_key()
+        if not key:
+            raise ValueError("请设置北京地域的 DASHSCOPE_API_KEY 后重试。")
+        audio = asyncio.run(qwen.synthesize(key, text, voice["speaker"], speed))
+        source = output.with_suffix(".mp3")
+        try:
+            source.write_bytes(audio)
+            decode_online_audio(self.ffmpeg, source, output, qwen.SAMPLE_RATE)
+        finally:
+            source.unlink(missing_ok=True)
+
+
+class LocalQwenNarrator(Narrator):
+    def __init__(self, config):
+        self.port = config.get("qwen_local_port")
+        self.ffmpeg = config["ffmpeg"]
+
+    @cached_property
+    def fingerprint(self):
+        engine, quantization, revision = qwen_local.model_details(self.port)
+        instruction = hashlib.sha256(qwen_local.INSTRUCTION.encode()).hexdigest()
+        return f"qwen-local-v1:{qwen_local.MODEL}:{engine}:{quantization}:{revision}:{instruction}"
+
+    def synthesize(self, text, voice, speed, output):
+        audio = qwen_local.synthesize(self.port, text, voice["speaker"])
+        if speed == 1:
+            output.write_bytes(audio)
+            return
+        source = output.with_suffix(".native.wav")
+        try:
+            source.write_bytes(audio)
+            run([self.ffmpeg, "-nostdin", "-v", "error", "-xerror", "-y", "-i", source,
+                 "-af", f"atempo={speed}", "-c:a", "pcm_s16le", output], timeout=30)
+        finally:
+            source.unlink(missing_ok=True)
+
+
+def decode_online_audio(ffmpeg, source, output, sample_rate):
+    run([ffmpeg, "-nostdin", "-v", "error", "-xerror", "-y", "-i", source,
+         "-map", "0:a:0", "-ac", "1", "-ar", str(sample_rate), "-c:a", "pcm_s16le", output],
+        timeout=30)
+
+
+def combine(inputs, output):
+    first = wave_info(inputs[0])
+    with wave.open(str(output), "wb") as dest:
+        dest.setparams(first)
+        for path in inputs:
+            with wave.open(str(path), "rb") as source:
+                if source.getparams()[:3] != first[:3]:
+                    raise ValueError("音频片段采样格式不一致。")
+                while block := source.readframes(32768):
+                    dest.writeframesraw(block)
+
+
+def probe(ffprobe, path):
+    data = json.loads(run([ffprobe, "-v", "error", "-show_format", "-show_chapters",
+                           "-select_streams", "a:0", "-show_streams", "-of", "json", path]))
+    duration = round(float(data["format"]["duration"]) * 1000)
+    if duration <= 0 or len(data.get("streams", [])) != 1:
+        raise ValueError("音频文件无可用音轨。")
+    return duration, data.get("chapters", [])
+
+
+def escape_metadata(text):
+    return re.sub(r"([\\=;#])", r"\\\1", text).replace("\r", "").replace("\n", "\\\n")
+
+
+def encode(ffmpeg, ffprobe, inputs, output, album, artist, title,
+           track=None, chapters=None, cover=None):
+    sample_rate = wave_info(inputs[0]).framerate
+    prefix = [ffmpeg, "-nostdin", "-v", "error", "-y",
+              "-f", "concat", "-safe", "0", "-i", output.with_suffix(".concat")]
+    output.with_suffix(".concat").write_text(
+        "".join("file '" + path.as_posix().replace("'", "'\\''") + "'\n" for path in inputs),
+        encoding="utf-8",
+    )
+    extra = []
+    if chapters is not None:
+        meta = output.with_suffix(".metadata")
+        meta.write_text(";FFMETADATA1\n" + "".join(
+            f"[CHAPTER]\nTIMEBASE=1/{sample_rate}\nSTART={start}\nEND={end}\ntitle={escape_metadata(name)}\n"
+            for name, start, end in chapters
+        ), encoding="utf-8")
+        prefix += ["-f", "ffmetadata", "-i", meta]
+        extra += ["-map_chapters", "1", "-c:a", "aac", "-b:a", "112k", "-movflags", "+faststart"]
+        if cover and cover.is_file():
+            prefix += ["-i", cover]
+            extra += ["-map", "2:v:0", "-c:v", "mjpeg", "-disposition:v:0", "attached_pic"]
+    else:
+        extra = ["-c:a", "libmp3lame", "-q:a", "2", "-metadata", f"track={track}"]
+    temp = output.with_name(f".partial{output.suffix}")
+    run(prefix + ["-map", "0:a:0"] + extra + [
+        "-metadata", f"album={album}", "-metadata", f"artist={artist}",
+        "-metadata", f"title={title}", temp,
+    ])
+    duration, actual = probe(ffprobe, temp)
+    if chapters is not None:
+        expected = [(name, round(a * 1000 / sample_rate), round(b * 1000 / sample_rate))
+                    for name, a, b in chapters]
+        measured = [(item.get("tags", {}).get("title"),
+                     round(float(item["start_time"]) * 1000),
+                     round(float(item["end_time"]) * 1000)) for item in actual]
+        if len(expected) != len(measured) or any(
+            name != found or abs(a-x) > 100 or abs(b-y) > 100 or x >= y
+            for (name, a, b), (found, x, y) in zip(expected, measured)
+        ) or abs(duration - expected[-1][2]) > 100:
+            raise ValueError("M4B 目录或总时长与合成音频不一致。")
+    run([ffmpeg, "-nostdin", "-v", "error", "-xerror", "-i", temp, "-map", "0:a:0", "-f", "null", "-"])
+    temp.replace(output)
+    return duration, actual

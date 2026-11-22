@@ -1,4 +1,0 @@
-﻿index,title,mp3_filename,mp3_bytes,mp3_size_mb,mp3_duration_ms,mp3_duration_s,m4b_start_ms,m4b_end_ms,m4b_start_s,m4b_end_s,m4b_duration_ms,web_mp3_duration_ms,web_mp3_duration_s,mp3_duration_diff_ms,web_m4b_start_ms,web_m4b_end_ms,web_m4b_start_s,web_m4b_end_s,m4b_start_diff_ms,m4b_end_diff_ms,web_state,probed_m4b_title
-1,序言,001 - 序言.mp3,221036,0.21,27600,27.6,0,27552,0.0,27.552,27552,27600,27.6,0,0,27552,0.0,27.552,0,0,done,序言
-2,出发,002 - 出发.mp3,302444,0.29,37776,37.776,27552,65280,27.552,65.28,37728,37776,37.776,0,27552,65280,27.552,65.28,0,0,done,出发
-3,出发,003 - 出发.mp3,456236,0.44,57000,57.0,65280,122232,65.28,122.232,56952,57000,57.0,0,65280,122232,65.28,122.232,0,0,done,出发

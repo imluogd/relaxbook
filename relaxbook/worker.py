@@ -498,15 +498,15 @@ class JobRunner:
         # Engines may return WAV (Qwen) or MP3 (Edge); FFmpeg sniffs the
         # content, but the suffix keeps temporary files honest for humans.
         suffix = "." + str(getattr(engine, "audio_format", "mp3") or "mp3").lstrip(".")
-        mp3_temp = target.with_name(f".{target.name}.{token}{suffix}")
-        wav_temp = target.with_name(f".{target.name}.{token}.wav")
+        raw_temp = target.with_name(f".{target.name}.{token}.raw{suffix}")
+        wav_temp = target.with_name(f".{target.name}.{token}.decoded.wav")
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             data = engine.synthesize(str(segment["text"]), voice, rate)
             if not data:
                 raise TTSError("语音引擎返回空音频。")
-            mp3_temp.write_bytes(data)
-            audio.decode_to_wav(mp3_temp, wav_temp, ffmpeg=self.settings.ffmpeg)
+            raw_temp.write_bytes(data)
+            audio.decode_to_wav(raw_temp, wav_temp, ffmpeg=self.settings.ffmpeg)
             duration_ms = audio.wav_duration_ms(wav_temp)
             if duration_ms <= 0:
                 raise RuntimeError("解码后的音频时长为 0，片段已丢弃。")
@@ -524,7 +524,7 @@ class JobRunner:
                 "synth_ms": int((time.perf_counter() - started) * 1000),
             }
         finally:
-            for temporary in (mp3_temp, wav_temp):
+            for temporary in (raw_temp, wav_temp):
                 try:
                     temporary.unlink(missing_ok=True)
                 except OSError:  # pragma: no cover - best effort

@@ -298,15 +298,17 @@
       if (index === 0) checkbox.checked = true;
       label.appendChild(checkbox);
       const gender = voice.gender === "Male" ? "男" : (voice.gender === "Female" ? "女" : "");
+      const engineTag = voice.engine === "qwen" ? "Qwen" : (voice.engine === "edge" ? "Edge" : (voice.engine || ""));
       label.appendChild(document.createTextNode(
         " " + (voice.name || voice.id) + "（" + (voice.language || "") +
-        (gender ? "，" + gender : "") + "）"
+        (gender ? "，" + gender : "") + (engineTag ? "，" + engineTag : "") + "）"
       ));
       container.appendChild(label);
 
       const option = document.createElement("option");
       option.value = voice.id;
-      option.textContent = (voice.name || voice.id) + "（" + (voice.language || "") + "）";
+      option.textContent = (voice.name || voice.id) + "（" + (voice.language || "") +
+        (engineTag ? "，" + engineTag : "") + "）";
       select.appendChild(option);
     });
   }

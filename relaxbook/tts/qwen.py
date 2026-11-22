@@ -29,23 +29,31 @@ import httpx
 
 from .base import TTSError, Voice
 
-#: Voices per model family.  The classic ``qwen-tts`` model exposes four
-#: bilingual voices; ``qwen3-tts-flash`` adds Mandarin dialect voices.
+#: Voices per model family.  ``qwen3-tts-flash`` is the current model and offers
+#: expressive Mandarin voices plus dialect voices; the older ``qwen-tts`` model
+#: only exposes the four bilingual ones.  Descriptions follow the official voice
+#: list (help.aliyun.com/zh/model-studio/qwen-tts-voice-list).
 QWEN_TTS_VOICES: tuple[Voice, ...] = (
-    Voice("Cherry", "Cherry（女·温柔，中英双语）", "zh-CN", "Female", "qwen"),
-    Voice("Serena", "Serena（女·抒情，中英双语）", "zh-CN", "Female", "qwen"),
-    Voice("Ethan", "Ethan（男·阳光，中英双语）", "zh-CN", "Male", "qwen"),
-    Voice("Chelsie", "Chelsie（女·甜美，中英双语）", "zh-CN", "Female", "qwen"),
+    Voice("Cherry", "芊悦（女·阳光自然）", "zh-CN", "Female", "qwen"),
+    Voice("Serena", "苏瑶（女·温柔）", "zh-CN", "Female", "qwen"),
+    Voice("Ethan", "晨煦（男·阳光，北方口音）", "zh-CN", "Male", "qwen"),
+    Voice("Chelsie", "千雪（女·二次元）", "zh-CN", "Female", "qwen"),
 )
 QWEN3_TTS_VOICES: tuple[Voice, ...] = QWEN_TTS_VOICES + (
+    Voice("Moon", "月白（男·率性帅气）", "zh-CN", "Male", "qwen"),
+    Voice("Maia", "四月（女·知性温柔）", "zh-CN", "Female", "qwen"),
+    Voice("Kai", "凯（男·低沉舒适）", "zh-CN", "Male", "qwen"),
+    Voice("Nofish", "不吃鱼（男·卷舌音偏弱的设计师）", "zh-CN", "Male", "qwen"),
+    Voice("Bella", "萌宝（女·小萝莉）", "zh-CN", "Female", "qwen"),
+    Voice("Momo", "茉兔（女·撒娇搞怪）", "zh-CN", "Female", "qwen"),
+    Voice("Vivian", "十三（女·小暴躁）", "zh-CN", "Female", "qwen"),
     Voice("Jada", "Jada（女·上海话）", "zh-CN", "Female", "qwen"),
     Voice("Dylan", "Dylan（男·北京话）", "zh-CN", "Male", "qwen"),
-    Voice("Sunny", "Sunny（女·四川话）", "zh-CN", "Female", "qwen"),
     Voice("Peter", "Peter（男·天津话）", "zh-CN", "Male", "qwen"),
 )
 
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com"
-DEFAULT_MODEL = "qwen-tts"
+DEFAULT_MODEL = "qwen3-tts-flash"
 GENERATION_PATH = "/api/v1/services/aigc/multimodal-generation/generation"
 
 

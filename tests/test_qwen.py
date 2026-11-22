@@ -97,7 +97,7 @@ def test_base64_audio_payload(monkeypatch) -> None:
     assert audio == WAV_BYTES
     url, body, headers = client.requests[0]
     assert url.endswith("/api/v1/services/aigc/multimodal-generation/generation")
-    assert body["model"] == "qwen-tts"
+    assert body["model"] == "qwen3-tts-flash"
     assert body["input"] == {"text": "清晨的列车", "voice": "Cherry"}
     assert headers["Authorization"] == "Bearer sk-test"
 

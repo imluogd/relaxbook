@@ -155,11 +155,13 @@ export RELAXBOOK_DATA_DIR="$HOME/RelaxBookData"
 
 | 引擎 | `engine` 值 | 音色 | 前置条件 | 语速 |
 | --- | --- | --- | --- | --- |
-| Qwen-TTS（阿里云百炼 / DashScope） | `qwen` | Cherry、Serena、Ethan、Chelsie（中英双语；`qwen3-tts-flash` 另有方言音色） | 需要 `DASHSCOPE_API_KEY` 或 `config.json` 的 `qwen_api_key`，按量计费 | 不支持 `rate`，请用 `+0%` |
+| Qwen-TTS（阿里云百炼 / DashScope，`qwen3-tts-flash`） | `qwen` | 14 个：芊悦/Cherry、苏瑶/Serena、晨煦/Ethan、千雪/Chelsie、月白/Moon、四月/Maia、凯/Kai、不吃鱼/Nofish、萌宝/Bella、茉兔/Momo、十三/Vivian、Jada（上海话）、Dylan（北京话）、Peter（天津话） | 需要 `DASHSCOPE_API_KEY` 或 `config.json` 的 `qwen_api_key`，按字符计费 | 暂不支持 `rate`，请用 `+0%` |
 | 微软 Edge 语音 | `edge` | 5 个中文（晓晓、晓伊、云希、云健、云扬）+ 2 个英文 | 免费，需联网 | 支持 `+0%`、`+10%` 等 |
 
 - 默认 `engine` 是 `auto`：**配置了 DashScope Key 就用 Qwen-TTS，否则自动使用 Edge**。`doctor` 会报告 Qwen 是否已配置（未配置只是警告，不阻塞）。
-- 启用 Qwen：`setx DASHSCOPE_API_KEY "sk-..."`（重开终端生效），或写进 `config.json` 的 `qwen_api_key`；随后 `doctor` 应显示「Qwen-TTS（可选）通过」，接口 `/api/voices` 会同时列出 Qwen 音色。
+- 启用 Qwen：`setx DASHSCOPE_API_KEY "sk-..."`（重开终端生效），或写进 `config.json` 的 `qwen_api_key`；随后 `doctor` 应显示「Qwen-TTS（可选）通过」，`/api/voices` 会列出全部 14 个 Qwen 音色（网页音色列表标注 `Qwen`/`Edge`）。
+- 选音色即选引擎：网页里勾选哪个音色，任务就用该音色所属的引擎（Qwen 与 Edge 音色可以混选试听，正式生成时建议同一本书统一用一个音色）。
+- 实测速度（本机，`qwen3-tts-flash`，并发 4）：约 **x10.9 实时**，即每 1 小时成品音频约 5.5 分钟；并发 1 时因单请求延迟约 8 秒会掉到 x1.2，所以 `concurrency` 不要设为 1。
 - Edge 在中国大陆直连微软语音服务需要浏览器 TLS 指纹，项目已用 `curl_cffi` 的 `impersonate="chrome"` WebSocket 处理，无需额外配置；`requirements.txt` 已锁定 `edge-tts` 与 `curl_cffi` 版本。
 - 公网端点偶发连接重置：Edge 引擎内置 25 秒单次超时、最多 5 次退避重试；仍失败时任务保留已完成片段，可在结果页点「重试」继续，不会重做已合成部分。
 - 本地离线引擎（Kokoro / IndexTTS）当前未内置：它们需要 GPU 才有可用速度，本项目所在机器为核显，因此优先接成熟云端引擎；`doctor` 不要求它们。

@@ -82,6 +82,39 @@ def list_voices(settings=None) -> list[Voice]:
     return voices
 
 
+def voice_engine(voice_id: str, settings=None) -> str | None:
+    """Which engine owns *voice_id* (``None`` when the voice is unknown).
+
+    The API lists Edge and Qwen voices together so the user can compare them;
+    the engine must follow the chosen voice, otherwise a Qwen job would be
+    created with an Edge voice id (or the other way round).
+    """
+    wanted = (voice_id or "").strip()
+    if not wanted:
+        return None
+    try:
+        if any(voice.id == wanted for voice in _edge().voices()):
+            return "edge"
+    except TTSError:
+        pass
+    if settings is not None and getattr(settings, "qwen_key", ""):
+        try:
+            if any(voice.id == wanted for voice in _qwen(settings).voices()):
+                return "qwen"
+        except Exception:  # noqa: BLE001 - optional engine
+            pass
+    return None
+
+
+def voices_for_engine(engine_name: str, settings=None) -> list[Voice]:
+    """Voices of one concrete engine (``auto`` is resolved first)."""
+    key = resolve_engine_name(engine_name, settings)
+    try:
+        return list(get_engine(key, settings).voices())
+    except Exception:  # noqa: BLE001 - unavailable optional engine
+        return []
+
+
 def engine_status(settings=None) -> list[dict]:
     """Availability report used by ``/api/voices`` and ``doctor``."""
     qwen_ready = bool(getattr(settings, "qwen_key", "")) if settings is not None else False
@@ -106,4 +139,6 @@ __all__ = [
     "get_engine",
     "list_voices",
     "resolve_engine_name",
+    "voice_engine",
+    "voices_for_engine",
 ]

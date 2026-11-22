@@ -806,9 +806,11 @@ def build_router(settings: Settings) -> APIRouter:
             raise HTTPException(
                 status_code=400, detail=f"试听文本过长，请控制在 {MAX_PREVIEW_TEXT} 字以内。"
             )
-        voice = (body.voice or "").strip() or settings.voice
+        voice = (body.voice or "").strip() or _default_voice_for(settings.resolved_engine, settings)
         rate = (body.rate or "").strip() or settings.rate or "+0%"
-        engine_name = tts.resolve_engine_name((body.engine or "").strip() or settings.engine, settings)
+        # The engine follows the chosen voice unless the caller pins one.
+        engine_name = tts.voice_engine(voice, settings) if not (body.engine or "").strip() else None
+        engine_name = engine_name or tts.resolve_engine_name((body.engine or "").strip() or settings.engine, settings)
         model = settings.model or ""
         try:
             engine = tts.get_engine(engine_name, settings)
@@ -880,8 +882,10 @@ def build_router(settings: Settings) -> APIRouter:
             revision = db.get_revision(conn, body.revision_id)
             if revision is None or int(revision["book_id"]) != body.book_id:
                 raise HTTPException(status_code=404, detail="编辑版本不存在")
-            voice = (body.voice or "").strip() or settings.voice
-            engine_name = tts.resolve_engine_name((body.engine or "").strip() or settings.engine, settings)
+            voice = (body.voice or "").strip() or _default_voice_for(settings.resolved_engine, settings)
+            # The engine follows the chosen voice unless the caller pins one.
+            engine_name = tts.voice_engine(voice, settings) if not (body.engine or "").strip() else None
+            engine_name = engine_name or tts.resolve_engine_name((body.engine or "").strip() or settings.engine, settings)
             rate = (body.rate or "").strip() or settings.rate or "+0%"
             formats = [f.strip() for f in (body.formats or ["m4b", "mp3"]) if f and f.strip()]
             if not formats:

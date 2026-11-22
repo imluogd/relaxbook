@@ -12,6 +12,8 @@ from pathlib import Path
 
 import sherpa_onnx
 
+from . import qwen
+
 LOG = logging.getLogger(__name__)
 MODEL_NAME = "kokoro-int8-multi-lang-v1_1"
 VOICES = [
@@ -50,7 +52,9 @@ def pack_directory(config, pack):
 
 
 def voice_options(config):
-    options = EDGE_VOICES.copy() if config.get("microsoft_online") and find_spec("edge_tts") else []
+    options = [qwen.VOICE.copy()] if qwen.api_key() else []
+    if config.get("microsoft_online") and find_spec("edge_tts"):
+        options.extend(EDGE_VOICES)
     for engine, pack in VOICE_PACKS.items():
         directory = pack_directory(config, pack)
         if all((directory / name).is_file() for name in ("model.onnx", "lexicon.txt", "tokens.txt")):
@@ -72,7 +76,7 @@ def chunks(text, limit=160):
 
 
 def speech_chunks(text, voice):
-    if voice.get("engine") != "edge":
+    if voice.get("engine") not in {"edge", "qwen"}:
         yield from chunks(text)
         return
     # Keep paragraph breaks and punctuation in the same request where possible.
@@ -257,11 +261,37 @@ class EdgeNarrator(Narrator):
                     "微软在线语音暂时无法生成音频。请检查网络后重试，或另选本地音色。"
                     f"（{type(error).__name__}）"
                 ) from error
-            run([self.ffmpeg, "-nostdin", "-v", "error", "-xerror", "-y", "-i", source,
-                 "-map", "0:a:0", "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", output],
-                timeout=30)
+            decode_online_audio(self.ffmpeg, source, output, 24000)
         finally:
             source.unlink(missing_ok=True)
+
+
+class QwenNarrator(Narrator):
+    def __init__(self, config):
+        self.ffmpeg = config["ffmpeg"]
+
+    @cached_property
+    def fingerprint(self):
+        instruction = hashlib.sha256(qwen.INSTRUCTION.encode()).hexdigest()
+        return f"qwen-websocket-v1:{qwen.MODEL}:{qwen.VOICE['speaker']}:{instruction}"
+
+    def synthesize(self, text, voice, speed, output):
+        key = qwen.api_key()
+        if not key:
+            raise ValueError("请设置北京地域的 DASHSCOPE_API_KEY 后重试。")
+        audio = asyncio.run(qwen.synthesize(key, text, voice["speaker"], speed))
+        source = output.with_suffix(".mp3")
+        try:
+            source.write_bytes(audio)
+            decode_online_audio(self.ffmpeg, source, output, qwen.SAMPLE_RATE)
+        finally:
+            source.unlink(missing_ok=True)
+
+
+def decode_online_audio(ffmpeg, source, output, sample_rate):
+    run([ffmpeg, "-nostdin", "-v", "error", "-xerror", "-y", "-i", source,
+         "-map", "0:a:0", "-ac", "1", "-ar", str(sample_rate), "-c:a", "pcm_s16le", output],
+        timeout=30)
 
 
 def combine(inputs, output):

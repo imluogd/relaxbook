@@ -14,7 +14,9 @@
 
 **需要补功能时的实现基线。** Python 3.11、FastAPI、Jinja2 模板和少量 JavaScript 提供本地网页。SQLite 保存任务和编辑稿，单独的 Python 工作进程执行转换。浏览器每两秒查询状态。复用 calibre 做格式转换、pypdf 与 pdfplumber 读 PDF 书签和文本、FFmpeg 与 ffprobe 封装并检查音频。优先调用候选工具公开支持的入口；仅有整书调用能力时，可按已确认的章节或文本片段分别传入，并由本项目管理重试。若适配成本超过直接集成语音引擎的成本，采用下述本地 TTS 接口。上述是本项目的设计选择，第三方工具内置的私有 HTTP 接口不作为依赖。
 
-**语音引擎基线。** 从本地中英双语 Kokoro 开始。独立实现可使用 sherpa-onnx 发布的 kokoro-multi-lang-v1_1 模型包，按包内说话人映射加载实际可用音色，支持 CPU。首次配置下载模型并校验，之后在已配置机器上可断网生成。首选音色由用户试听决定。解析目录、清理正文与封装音频使用常规程序，核心流程只需 TTS。云端语音服务是否可用、是否付费，留待用户另行决定。[模型与运行说明](https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/kokoro.html)
+用户在《爱弥儿》同文试听中选定 Qwen 龙安灵心有声书朗读指令版。配置北京地域的 `DASHSCOPE_API_KEY` 后，试听和整书默认使用 `qwen-audio-3.1-tts-plus`、`longanlingxin_v3.1` 和同一朗读指令。应用经 WebSocket 向百炼发送朗读片段，按服务用量计费。音频缓存、章节管理与封装在本机执行。[百炼语音合成](https://help.aliyun.com/zh/model-studio/qwen-audio-3-1-tts-plus)
+
+断网时可使用本地语音。离线基线采用 sherpa-onnx 的中英双语 Kokoro 模型，按包内映射加载音色，支持 CPU。首次下载模型并校验后即可在本机生成音频。解析目录、清理正文与封装音频使用常规程序，核心流程只需 TTS。[模型与运行说明](https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/kokoro.html)
 
 ## 网页操作与异常反馈
 

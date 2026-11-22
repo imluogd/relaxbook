@@ -30,13 +30,21 @@ python3.11 -m venv .venv
 
 浏览器打开 [本机书库](http://127.0.0.1:8765)。选择电子书并检查章节，试听音色后点击「生成有声书」。完成后下载 M4B 导入手机，也可以逐章下载 MP3 或打包下载。
 
+### 使用 Qwen 龙安灵心
+
+在运行 RelaxBook 的电脑上配置阿里云百炼华北 2（北京）的 `DASHSCOPE_API_KEY`。Windows 可搜索「编辑账户的环境变量」，添加同名的用户变量。macOS 和 Linux 在启动进程的环境中设置。密钥留在本机，避免写入项目配置或提交到 Git。[获取百炼 API Key](https://help.aliyun.com/zh/model-studio/get-api-key)
+
+检测到密钥时，网页默认选择「Qwen · 龙安灵心 · 有声书朗读指令」。试听和整书使用同一个 `qwen-audio-3.1-tts-plus` 模型、音色和朗读指令。使用北京 WebSocket 接入，只需配置 API Key。在已有安装上更新代码后，先用当前虚拟环境执行 `python -m pip install -r requirements.txt`，再重启网页服务。
+
+Qwen 合成会把待朗读的文字发送给百炼，可能按字符计费。书籍文件、音频和转换进度保存在本机。网络或额度问题导致任务失败时，可在结果页重试，已成功合成的片段从本机缓存复用。[模型与计费](https://help.aliyun.com/zh/model-studio/qwen-audio-3-1-tts-plus)
+
 ### 使用微软在线音色
 
-安装可选依赖 `python -m pip install -r requirements-edge.txt`，在 `relaxbook.local.json` 中把 `microsoft_online` 设为 `true`，再重启。启动虚拟环境中的 Python 执行命令。启用后优先选中晓晓，另有云扬和英文 Jenny，离线音色仍可选择。
+安装可选依赖 `python -m pip install -r requirements-edge.txt`，在 `relaxbook.local.json` 中把 `microsoft_online` 设为 `true`，再重启。启动虚拟环境中的 Python 执行命令。可选择晓晓、云扬和英文 Jenny，离线音色仍可选择。
 
 微软音色通过 [edge-tts](https://github.com/rany2/edge-tts) 调用 Edge 在线朗读服务，无需 Azure API 密钥。使用该音色时，待朗读的文字会发送到微软服务，书籍文件、导出的音频和转换进度保存在本机。联网合成失败时可在结果页重试，已完成的片段从本机缓存复用。该服务与 [Azure Speech 正式计费接口](https://azure.microsoft.com/en-us/pricing/details/speech/) 分开。Edge 在线朗读服务的可用性和限制由微软决定。
 
-`setup-voices` 安装可选的两套离线普通话语音包，压缩下载合计约 286 MB。安装后重新启动网页，即可试听 Melo 中英混读女声及 VITS 的五种普通话音色。网页优先选择 Melo，原 Kokoro 音色仍可用于对照和续跑。在同一段正文上保持语速一致，勾选多个音色进行比较。要给已完成的书换音色，请在原书页面选择新音色并再次生成。语音合成在本机完成。
+`setup-voices` 安装可选的两套离线普通话语音包，压缩下载合计约 286 MB。安装后重新启动网页，即可试听 Melo 中英混读女声及 VITS 的五种普通话音色。只使用离线音色时，网页优先选择 Melo，原 Kokoro 音色仍可用于对照和续跑。在同一段正文上保持语速一致，勾选多个音色进行比较。要给已完成的书换音色，请在原书页面选择新音色并再次生成。语音合成在本机完成。
 
 Melo 的原生采样率为 44.1 kHz，VITS 普通话语音包为 16 kHz。转换保留引擎的原生采样率，M4B 按实际样本数计算章节时间。新语音片段使用有限的增益调整，并为编码留出峰值余量。M4B 使用更高的 AAC 码率，MP3 使用 LAME 可变码率质量档 2。试听可以区分朗读节奏和音色，采样率和码率只反映音频格式。
 
@@ -50,7 +58,7 @@ Melo 的原生采样率为 44.1 kHz，VITS 普通话语音包为 16 kHz。转换
 python tests/smoke.py http://127.0.0.1:8765 path/to/evidence
 ```
 
-该检查生成三章 EPUB，调用当前安装的音色，核对真实 M4B 章节、分章 MP3、ZIP 和结果数据。人工试听、真机播放和新电脑复装按 [验收清单](docs/ACCEPTANCE.md) 执行。
+该检查生成三章 EPUB，调用当前安装的离线音色，核对真实 M4B 章节、分章 MP3、ZIP 和结果数据。人工试听、真机播放和新电脑复装按 [验收清单](docs/ACCEPTANCE.md) 执行。
 
 分支采用 Spec 中的独立实现基线，直接集成 [sherpa-onnx Kokoro](https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/kokoro.html)，以便复用语音片段并单独重试封装。abogen 和 ebook2audiobook 的完整 Web 界面实测对比仍待补充。首版的扫描件会提示 OCR，复杂版式和分章错误可通过网页检查并编辑正文。
 

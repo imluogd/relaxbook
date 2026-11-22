@@ -6,7 +6,7 @@ from pathlib import Path
 from filelock import FileLock
 
 from .audio import (
-    VOICE_PACKS, EdgeNarrator, Narrator, VitsNarrator, encode, pack_directory,
+    VOICE_PACKS, EdgeNarrator, Narrator, QwenNarrator, VitsNarrator, encode, pack_directory,
     probe, speech_chunks, wave_info,
 )
 from .books import parse
@@ -165,6 +165,7 @@ def work(store, config):
     narrators = {
         "kokoro": Narrator(config["model_dir"], config["threads"]),
         "edge": EdgeNarrator(config),
+        "qwen": QwenNarrator(config),
     }
     for name, pack in VOICE_PACKS.items():
         narrators[name] = VitsNarrator(pack_directory(config, pack), config["threads"])

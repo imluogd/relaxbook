@@ -13,33 +13,44 @@ from urllib.request import urlopen
 import uvicorn
 from filelock import FileLock, Timeout
 
-from .audio import MODEL_NAME, VOICES, Narrator
+from .audio import MODEL_NAME, VOICES, VOICE_PACKS, Narrator, VitsNarrator, pack_directory, voice_options
 from .store import Store, settings
 from .worker import run_worker
 
-MODEL_URL = f"https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/{MODEL_NAME}.tar.bz2"
+MODEL_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models"
 MODEL_SHA256 = "259c9c8bc906d6078e4e0570421885dabb68b539c2f970fcbb890a58eeaf3e9c"
 
 
 def setup(config):
     model = Narrator(config["model_dir"], config["threads"])
-    if model.model.is_file():
-        print(f"Model found at {model.directory}")
+    install_model(MODEL_NAME, model.directory, MODEL_SHA256, model.model)
+
+
+def install_model(name, directory, expected, model_path):
+    if model_path.is_file():
+        print(f"Model found at {directory}")
         return
-    model.directory.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=model.directory.parent) as tmp:
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=directory.parent) as tmp:
         archive = Path(tmp) / "model.tar.bz2"
-        print(f"Downloading Kokoro from {MODEL_URL}", flush=True)
-        with urlopen(MODEL_URL, timeout=90) as source, archive.open("wb") as out:
+        url = f"{MODEL_URL}/{name}.tar.bz2"
+        print(f"Downloading {name} from {url}", flush=True)
+        with urlopen(url, timeout=90) as source, archive.open("wb") as out:
             shutil.copyfileobj(source, out)
         with archive.open("rb") as source:
             digest = hashlib.file_digest(source, "sha256").hexdigest()
-        if digest != MODEL_SHA256:
+        if digest != expected:
             raise ValueError("模型压缩包的 SHA-256 与发布版本不符。")
         with tarfile.open(archive) as tar:
             tar.extractall(tmp, filter="data")
-        (Path(tmp) / MODEL_NAME).rename(model.directory)
-        print(f"Installed Kokoro at {model.directory}")
+        (Path(tmp) / name).rename(directory)
+        print(f"Installed {name} at {directory}")
+
+
+def setup_voices(config):
+    for pack in VOICE_PACKS.values():
+        directory = pack_directory(config, pack)
+        install_model(pack["directory"], directory, pack["sha256"], directory / "model.onnx")
 
 
 def doctor(config):
@@ -61,6 +72,14 @@ def doctor(config):
         if not len(audio.samples):
             raise ValueError("语音模型测试返回空音频。")
         print("Kokoro rendered an offline voice sample.")
+        for engine, pack in VOICE_PACKS.items():
+            candidate = VitsNarrator(pack_directory(config, pack), config["threads"])
+            if candidate.model.is_file():
+                generated = candidate.engine.generate("雨停了，书店已经开门。", sid=0)
+                if not len(generated.samples):
+                    raise ValueError(f"{engine} 语音模型测试返回空音频。")
+                print(f"{engine}: offline sample at {generated.sample_rate} Hz.")
+        print(f"{len(voice_options(config))} voice options.")
     except Exception as error:
         failures.append(str(error))
     print(f"Data directory: {config['data_dir']}")
@@ -107,12 +126,14 @@ def start(config):
 
 def main():
     parser = argparse.ArgumentParser(prog="python -m relaxbook")
-    parser.add_argument("command", choices=["setup", "doctor", "start"])
+    parser.add_argument("command", choices=["setup", "setup-voices", "doctor", "start"])
     command = parser.parse_args().command
     config = settings()
     try:
         if command == "setup":
             setup(config)
+        elif command == "setup-voices":
+            setup_voices(config)
         elif command == "doctor":
             return doctor(config)
         else:

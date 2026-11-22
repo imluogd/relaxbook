@@ -19,6 +19,33 @@ VOICES = [
     {"id": 0, "label": "English 0", "language": "en"},
 ]
 
+VOICE_PACKS = {
+    "melo": {
+        "directory": "vits-melo-tts-zh_en",
+        "sha256": "e58351ed7149f290a54534538badd4077cdbe6fddc964b24d0bee870415d1514",
+        "voices": [(100, 0, "Melo · 中英混读")],
+    },
+    "vits": {
+        "directory": "sherpa-onnx-vits-zh-ll",
+        "sha256": "f7393d1bbc59709d5f52ea76cd5bceeec62f6a29f9c1f79ff64b4c15ec841f3a",
+        "voices": [(110 + i, i, f"VITS · 普通话 {i + 1}") for i in range(5)],
+    },
+}
+
+
+def pack_directory(config, pack):
+    return Path(config["model_dir"]).parent / pack["directory"]
+
+
+def voice_options(config):
+    options = []
+    for engine, pack in VOICE_PACKS.items():
+        directory = pack_directory(config, pack)
+        if all((directory / name).is_file() for name in ("model.onnx", "lexicon.txt", "tokens.txt")):
+            options.extend({"id": key, "speaker": sid, "label": label, "language": "zh", "engine": engine}
+                           for key, sid, label in pack["voices"])
+    return options + VOICES
+
 
 def chunks(text, limit=160):
     for paragraph in text.splitlines():
@@ -67,8 +94,8 @@ class Narrator:
     @cached_property
     def fingerprint(self):
         if not self.model.is_file():
-            raise ValueError("本机还没有 Kokoro 模型，请运行 setup。")
-        digest = hashlib.sha256(f"segments-v1:sherpa-onnx-{version('sherpa-onnx')}".encode())
+            raise ValueError("本机缺少所选音色的模型，请运行 setup 或 setup-voices。")
+        digest = hashlib.sha256(f"{self.cache_version}:sherpa-onnx-{version('sherpa-onnx')}".encode())
         for path in sorted(self.directory.rglob("*")):
             if path.is_file() and path.name not in {"README.md", "LICENSE"}:
                 digest.update(path.relative_to(self.directory).as_posix().encode())
@@ -76,6 +103,8 @@ class Narrator:
                     for block in iter(lambda: stream.read(1024**2), b""):
                         digest.update(block)
         return digest.hexdigest()
+
+    cache_version = "segments-v1"
 
     @cached_property
     def engine(self):
@@ -105,22 +134,60 @@ class Narrator:
         try:
             with wave.open(str(path), "rb") as stream:
                 if (stream.getnchannels() == 1 and stream.getsampwidth() == 2
-                    and stream.getframerate() == 24000 and stream.getnframes() > 0
+                    and stream.getframerate() > 0 and stream.getnframes() > 0
                     and path.stat().st_size >= stream.getnframes() * 2 + 44):
                     LOG.info("Reused segment %s", key)
                     return path
         except (OSError, EOFError, wave.Error):
             pass
         tmp = path.with_suffix(".partial.wav")
-        audio = self.engine.generate(text, sid=voice["id"], speed=speed)
-        if not sherpa_onnx.write_wave(str(tmp), audio.samples, audio.sample_rate):
+        audio = self.engine.generate(text, sid=voice.get("speaker", voice["id"]), speed=speed)
+        if not sherpa_onnx.write_wave(str(tmp), self.prepare_samples(audio.samples), audio.sample_rate):
             raise RuntimeError("无法写入语音片段。")
         info = wave_info(tmp)
-        if info.nframes <= 0 or (info.nchannels, info.sampwidth, info.framerate) != (1, 2, 24000):
+        if info.nframes <= 0 or (info.nchannels, info.sampwidth) != (1, 2):
             raise RuntimeError("语音引擎返回空片段或不支持的采样格式。")
         tmp.replace(path)
         LOG.info("Synthesized segment %s", key)
         return path
+
+    def prepare_samples(self, samples):
+        return samples
+
+
+class VitsNarrator(Narrator):
+    cache_version = "vits-fp32-level-v1"
+
+    @cached_property
+    def model(self):
+        return self.directory / "model.onnx"
+
+    @cached_property
+    def engine(self):
+        d = self.directory
+        config = sherpa_onnx.OfflineTtsConfig(
+            model=sherpa_onnx.OfflineTtsModelConfig(
+                vits=sherpa_onnx.OfflineTtsVitsModelConfig(
+                    model=str(self.model), tokens=str(d / "tokens.txt"), lexicon=str(d / "lexicon.txt"),
+                ),
+                num_threads=self.threads, provider="cpu",
+            ),
+            rule_fsts=",".join(str(d / name) for name in ("phone.fst", "date.fst", "number.fst")
+                               if (d / name).is_file()),
+            max_num_sentences=1,
+        )
+        if not config.validate():
+            raise ValueError("离线语音包不完整，请重新安装模型。")
+        return sherpa_onnx.OfflineTts(config)
+
+    def prepare_samples(self, samples):
+        peak = max(map(abs, samples), default=0)
+        if peak < 1e-5:
+            raise ValueError("语音引擎返回了静音。请检查原文或试听其他音色。")
+        rms = (sum(value * value for value in samples) / len(samples)) ** 0.5
+        # Use one gain per segment, without a compressor or a change in timing.
+        gain = min(10 ** (8 / 20), 10 ** (-2 / 20) / peak, 10 ** (-20 / 20) / rms)
+        return [sample * gain for sample in samples]
 
 
 def combine(inputs, output):
@@ -150,6 +217,7 @@ def escape_metadata(text):
 
 def encode(ffmpeg, ffprobe, inputs, output, album, artist, title,
            track=None, chapters=None, cover=None):
+    sample_rate = wave_info(inputs[0]).framerate
     prefix = [ffmpeg, "-nostdin", "-v", "error", "-y",
               "-f", "concat", "-safe", "0", "-i", output.with_suffix(".concat")]
     output.with_suffix(".concat").write_text(
@@ -160,16 +228,16 @@ def encode(ffmpeg, ffprobe, inputs, output, album, artist, title,
     if chapters is not None:
         meta = output.with_suffix(".metadata")
         meta.write_text(";FFMETADATA1\n" + "".join(
-            f"[CHAPTER]\nTIMEBASE=1/24000\nSTART={start}\nEND={end}\ntitle={escape_metadata(name)}\n"
+            f"[CHAPTER]\nTIMEBASE=1/{sample_rate}\nSTART={start}\nEND={end}\ntitle={escape_metadata(name)}\n"
             for name, start, end in chapters
         ), encoding="utf-8")
         prefix += ["-f", "ffmetadata", "-i", meta]
-        extra += ["-map_chapters", "1", "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart"]
+        extra += ["-map_chapters", "1", "-c:a", "aac", "-b:a", "112k", "-movflags", "+faststart"]
         if cover and cover.is_file():
             prefix += ["-i", cover]
             extra += ["-map", "2:v:0", "-c:v", "mjpeg", "-disposition:v:0", "attached_pic"]
     else:
-        extra = ["-c:a", "libmp3lame", "-b:a", "64k", "-metadata", f"track={track}"]
+        extra = ["-c:a", "libmp3lame", "-q:a", "2", "-metadata", f"track={track}"]
     temp = output.with_name(f".partial{output.suffix}")
     run(prefix + ["-map", "0:a:0"] + extra + [
         "-metadata", f"album={album}", "-metadata", f"artist={artist}",
@@ -177,7 +245,8 @@ def encode(ffmpeg, ffprobe, inputs, output, album, artist, title,
     ])
     duration, actual = probe(ffprobe, temp)
     if chapters is not None:
-        expected = [(name, round(a / 24), round(b / 24)) for name, a, b in chapters]
+        expected = [(name, round(a * 1000 / sample_rate), round(b * 1000 / sample_rate))
+                    for name, a, b in chapters]
         measured = [(item.get("tags", {}).get("title"),
                      round(float(item["start_time"]) * 1000),
                      round(float(item["end_time"]) * 1000)) for item in actual]

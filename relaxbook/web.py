@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .audio import VOICES, chapter_name, chunks, safe_name
+from .audio import chapter_name, chunks, safe_name, voice_options
 from .store import Store, settings, uid
 
 config = settings()
@@ -61,7 +61,7 @@ def find(kind, key, db=None):
 
 
 def voice_by_id(voice_id):
-    voice = next((v for v in VOICES if v["id"] == voice_id), None)
+    voice = next((v for v in voice_options(config) if v["id"] == voice_id), None)
     if voice is None:
         raise HTTPException(422, "请选择已安装的音色。")
     return voice
@@ -160,7 +160,7 @@ def save_revision(key: str, edit: RevisionEdit):
 
 @app.get("/api/voices")
 def voices():
-    return VOICES
+    return voice_options(config)
 
 
 @app.post("/api/previews", status_code=202)

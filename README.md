@@ -12,6 +12,7 @@
 py -3.11 -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 .venv\Scripts\python.exe -m relaxbook setup
+.venv\Scripts\python.exe -m relaxbook setup-voices
 .venv\Scripts\python.exe -m relaxbook doctor
 .venv\Scripts\python.exe -m relaxbook start
 ```
@@ -22,11 +23,16 @@ macOS 和 Linux 使用以下命令：
 python3.11 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python -m relaxbook setup
+.venv/bin/python -m relaxbook setup-voices
 .venv/bin/python -m relaxbook doctor
 .venv/bin/python -m relaxbook start
 ```
 
 浏览器打开 [本机书库](http://127.0.0.1:8765)。选择电子书并检查章节，试听音色后点击「生成有声书」。完成后下载 M4B 导入手机，也可以逐章下载 MP3 或打包下载。
+
+`setup-voices` 安装可选的两套离线普通话语音包，压缩下载合计约 286 MB。安装后重新启动网页，即可试听 Melo 中英混读女声及 VITS 的五种普通话音色。网页优先选择 Melo，原 Kokoro 音色仍可用于对照和续跑。在同一段正文上保持语速一致，勾选多个音色进行比较。要给已完成的书换音色，请在原书页面选择新音色并再次生成。语音合成在本机完成。
+
+Melo 的原生采样率为 44.1 kHz，VITS 普通话语音包为 16 kHz。转换保留引擎的原生采样率，M4B 按实际样本数计算章节时间。新语音片段使用有限的增益调整，并为编码留出峰值余量。M4B 使用更高的 AAC 码率，MP3 使用 LAME 可变码率质量档 2。试听可以区分朗读节奏和音色，采样率和码率只反映音频格式。
 
 复制 `relaxbook.example.json` 为 `relaxbook.local.json` 可调整端口、工具路径、`data_dir` 和 `model_dir`。也可通过环境变量 `RELAXBOOK_CONFIG` 指向配置文件。默认的数据库及模型位于 Windows 的 `%LOCALAPPDATA%\RelaxBook` 或 macOS/Linux 的 `~/.local/share/RelaxBook`。浏览器关闭后，启动终端继续运行转换。退出并重启后，在结果页点击「继续」恢复中断任务。
 
@@ -38,7 +44,7 @@ python3.11 -m venv .venv
 python tests/smoke.py http://127.0.0.1:8765 path/to/evidence
 ```
 
-该检查生成三章 EPUB，调用四个音色，核对真实 M4B 章节、分章 MP3、ZIP 和结果数据。人工试听、真机播放和新电脑复装按 [验收清单](docs/ACCEPTANCE.md) 执行。
+该检查生成三章 EPUB，调用当前安装的音色，核对真实 M4B 章节、分章 MP3、ZIP 和结果数据。人工试听、真机播放和新电脑复装按 [验收清单](docs/ACCEPTANCE.md) 执行。
 
 分支采用 Spec 中的独立实现基线，直接集成 [sherpa-onnx Kokoro](https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/kokoro.html)，以便复用语音片段并单独重试封装。abogen 和 ebook2audiobook 的完整 Web 界面实测对比仍待补充。首版的扫描件会提示 OCR，复杂版式和分章错误可通过网页检查并编辑正文。
 

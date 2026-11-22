@@ -5,7 +5,7 @@ from pathlib import Path
 
 from filelock import FileLock
 
-from .audio import Narrator, chunks, encode, probe, wave_info
+from .audio import VOICE_PACKS, Narrator, VitsNarrator, chunks, encode, pack_directory, probe, wave_info
 from .books import parse
 from .store import Store, settings
 
@@ -159,7 +159,9 @@ def archive_job(store, job):
 
 
 def work(store, config):
-    narrator = Narrator(config["model_dir"], config["threads"])
+    narrators = {"kokoro": Narrator(config["model_dir"], config["threads"])}
+    for name, pack in VOICE_PACKS.items():
+        narrators[name] = VitsNarrator(pack_directory(config, pack), config["threads"])
     with FileLock(str(store.root / "worker.lock"), timeout=0):
         with store.connect(write=True) as db:
             for kind, interrupted in [
@@ -191,9 +193,9 @@ def work(store, config):
                 if kind == "book":
                     import_book(store, config, item)
                 elif kind == "preview":
-                    render_preview(store, narrator, item)
+                    render_preview(store, narrators[item["voice"].get("engine", "kokoro")], item)
                 elif kind == "job":
-                    export_job(store, config, narrator, item)
+                    export_job(store, config, narrators[item["voice"].get("engine", "kokoro")], item)
                 else:
                     archive_job(store, item)
 
